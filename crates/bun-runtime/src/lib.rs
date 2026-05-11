@@ -8,13 +8,14 @@
 use std::path::{Path, PathBuf};
 
 use bun_jsc::{Callback, Context, JsException, Value};
-use bun_transpile::transpile_file;
 
 mod console;
+mod modules;
 mod process_global;
 mod timers;
 
 pub use console::install_console;
+pub use modules::{install_module_loader, run_entry, LoaderRuntimeError};
 pub use process_global::install_process;
 pub use timers::{install_timers, run_event_loop};
 
@@ -29,6 +30,7 @@ impl Runtime {
         install_console(&ctx);
         install_process(&ctx, argv);
         install_timers(&ctx);
+        install_module_loader(&ctx);
         install_global_this(&ctx);
         Self { ctx }
     }
@@ -38,16 +40,13 @@ impl Runtime {
         self.ctx.eval(code, Some(source_url))
     }
 
-    /// Load + transpile (if needed) + evaluate a script file.
+    /// Run a script file as the entry module. Goes through the module loader
+    /// so `import`/`export` work at top level.
     pub fn eval_file(&self, path: &Path) -> Result<(), RuntimeError> {
-        let source = std::fs::read_to_string(path)
-            .map_err(|e| RuntimeError::ReadFile(path.to_path_buf(), e))?;
-        let out = transpile_file(path, &source).map_err(RuntimeError::Transpile)?;
-        let url = path.to_string_lossy().into_owned();
-        self.ctx
-            .eval(&out.code, Some(&url))
-            .map_err(|exc| RuntimeError::Throw(format_exception(&exc)))?;
-        Ok(())
+        run_entry(&self.ctx, path).map_err(|e| match e {
+            LoaderRuntimeError::Io(p, ioe) => RuntimeError::ReadFile(p, ioe),
+            other => RuntimeError::Throw(other.to_string()),
+        })
     }
 
     /// Drive timers until the queue is empty. Call after the entry-point

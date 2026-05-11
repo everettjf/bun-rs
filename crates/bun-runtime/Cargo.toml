@@ -9,5 +9,6 @@ description = "JS event loop, module loader, and built-in globals for bun-rs."
 bun-jsc = { workspace = true }
 bun-jsc-sys = { workspace = true }
 bun-transpile = { workspace = true }
+bun-loader = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

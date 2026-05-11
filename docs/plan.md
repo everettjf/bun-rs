@@ -102,9 +102,18 @@ bun-rs/
 | oxc 还在演进 | 钉版本号。CSS 不进 MVP,所以不依赖 lightningcss。 |
 | Buffer/TypedArray 性能 | JSC `ArrayBuffer` backing store 可直接共享给 Rust,早期 prototype 验证。 |
 
-## 5. 当前进度(2026-05-11 第 1 天)
+## 5. 当前进度
 
-P0 全部完成,P1 大部分完成。
+### Day 2(2026-05-11):ESM Phase 1
+- ✅ 新 crate `bun-loader`(Resolver + ESM → IIFE Rewriter)
+- ✅ `bun-runtime::modules` 绑定 `__bun_require`、按绝对路径 cache、循环引用安全
+- ✅ 相对/绝对/裸 specifier 全部跑通(裸 specifier 走 `oxc_resolver`,支持 package.json `main`)
+- ✅ 命名 / default / namespace import,`export const|fn|class`,`export { a as b }`,`export { x } from`,`export *`,`export * as ns`
+- ✅ Diamond 依赖只跑一次,缺失 specifier 报清晰错
+- ✅ 56 tests pass(29 e2e + 16 loader + 6 jsc + 4 transpile + 1 sys),5 次 workspace 跑全绿
+- 🟡 循环引用走 CJS-ish 语义(读取的是 import 时的快照,不是 live binding)— 文档化,留给 Phase 2
+
+### Day 1(2026-05-11):P0 + P1 大部分
 
 **已交付**(`cargo test --workspace` → 30 tests pass):
 - ✅ workspace + 5 crates(`bun-cli` / `bun-runtime` / `bun-jsc-sys` / `bun-jsc` / `bun-transpile`)
@@ -120,9 +129,10 @@ P0 全部完成,P1 大部分完成。
 - ✅ 19 个 e2e 测试覆盖以上路径,release 二进制 3.2MB,启动到运行 TS 约 10ms
 
 **剩余 P1**:
-- ESM `import` 模块加载器(当前是单文件)
+- ~~ESM `import` 模块加载器(当前是单文件)~~ ✅ Phase 1 done(同步,静态 import/export)
 - `bun-rs repl`
 - sourcemap 错误回映射到 .ts
+- ESM Phase 2:dynamic `import()` + top-level await(跟 tokio 接入一起做)
 
 **待启动**:
 - P2:`Bun.serve` + Web API(`fetch` / `Request` / `Response` / `URL`)

@@ -6,6 +6,7 @@ members = [
     "crates/bun-jsc-sys",
     "crates/bun-jsc",
     "crates/bun-transpile",
+    "crates/bun-loader",
 ]
 
 [workspace.package]
@@ -21,6 +22,7 @@ bun-runtime = { path = "crates/bun-runtime" }
 bun-jsc-sys = { path = "crates/bun-jsc-sys" }
 bun-jsc = { path = "crates/bun-jsc" }
 bun-transpile = { path = "crates/bun-transpile" }
+bun-loader = { path = "crates/bun-loader" }
 
 anyhow = "1"
 thiserror = "2"

@@ -230,15 +230,231 @@ fn tsx_jsx_transpile() {
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "div");
 }
 
+// ── ESM (Phase 1: static imports / exports) ────────────────────────────────
+
+#[test]
+fn esm_named_import() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("greet.ts"),
+        "export function greet(who: string): string { return 'hi ' + who; }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { greet } from './greet';\nconsole.log(greet('world'));",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi world");
+}
+
+#[test]
+fn esm_default_import() {
+    let dir = tempdir();
+    std::fs::write(dir.join("life.ts"), "export default 42;").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import meaning from './life';\nconsole.log(meaning);",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+}
+
+#[test]
+fn esm_namespace_import() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("math.ts"),
+        "export const PI = 3; export function add(a: number, b: number) { return a + b; }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import * as m from './math';\nconsole.log(m.add(m.PI, 4));",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "7");
+}
+
+#[test]
+fn esm_renamed_import() {
+    let dir = tempdir();
+    std::fs::write(dir.join("dep.ts"), "export const x = 10;").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { x as y } from './dep';\nconsole.log(y);",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "10");
+}
+
+#[test]
+fn esm_export_star() {
+    let dir = tempdir();
+    std::fs::write(dir.join("leaf.ts"), "export const a = 1; export const b = 2;").unwrap();
+    std::fs::write(dir.join("barrel.ts"), "export * from './leaf';").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { a, b } from './barrel';\nconsole.log(a + b);",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
+}
+
+#[test]
+fn esm_export_from() {
+    let dir = tempdir();
+    std::fs::write(dir.join("leaf.ts"), "export const a = 5;").unwrap();
+    std::fs::write(
+        dir.join("barrel.ts"),
+        "export { a as renamed } from './leaf';",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { renamed } from './barrel';\nconsole.log(renamed);",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "5");
+}
+
+#[test]
+fn esm_circular_import_does_not_hang() {
+    // A imports B's func and uses it lazily; B imports A's const.
+    // Cycle should terminate; the partially-evaluated exports object is
+    // returned to the second importer (CJS-ish semantics).
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("a.ts"),
+        "import { b } from './b';\nexport const tag = 'A';\nexport function a() { return tag + b(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("b.ts"),
+        "import { tag } from './a';\nexport function b() { return ':' + tag; }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { a } from './a';\nconsole.log(a());",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    // tag inside b() reads the binding captured at import time, which is
+    // `undefined` because A's body hadn't finished when B was loaded. That's
+    // documented CJS-ish behavior; live bindings come in Phase 2.
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("A:"), "got: {s:?}");
+}
+
+#[test]
+fn esm_node_modules_resolution() {
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("node_modules/leftpad")).unwrap();
+    std::fs::write(
+        dir.join("node_modules/leftpad/package.json"),
+        r#"{"name":"leftpad","main":"./index.js"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("node_modules/leftpad/index.js"),
+        "export function leftpad(s, n, ch) { ch = ch ?? ' '; while (s.length < n) s = ch + s; return s; }",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { leftpad } from 'leftpad';\nconsole.log(leftpad('7', 4, '0'));",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "0007");
+}
+
+#[test]
+fn esm_diamond_shared_dep_evaluated_once() {
+    // main → left + right → shared. shared has a top-level side effect we
+    // count. shared.count should be 1, not 2.
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("shared.ts"),
+        "let n = 0; n++; export const count = n;",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("left.ts"),
+        "import { count } from './shared'; export const L = count;",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("right.ts"),
+        "import { count } from './shared'; export const R = count;",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { L } from './left'; import { R } from './right'; console.log(L, R);",
+    )
+    .unwrap();
+
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1 1");
+}
+
+#[test]
+fn esm_missing_specifier_errors() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { x } from './does-not-exist';\nconsole.log(x);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("does-not-exist") || stderr.to_lowercase().contains("cannot find"),
+        "stderr: {stderr}"
+    );
+}
+
 // ── tiny test helper: a temp dir that cleans up on drop ─────────────────────
 
 fn tempdir() -> std::path::PathBuf {
-    let mut p = std::env::temp_dir();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nano = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    p.push(format!("bun-rs-test-{nano}-{}", std::process::id()));
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "bun-rs-test-{nano}-{}-{seq}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&p).unwrap();
     p
 }

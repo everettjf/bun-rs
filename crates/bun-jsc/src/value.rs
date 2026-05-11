@@ -28,6 +28,14 @@ impl<'ctx> Value<'ctx> {
         Self { ctx, raw }
     }
 
+    /// Public escape hatch for crates that need to mint a `Value` from a raw
+    /// pointer (e.g. the runtime's module loader pulling cached exports out
+    /// of a `HashMap<_, JSValueRef>`). Caller is responsible for keeping the
+    /// raw pointer alive — typically via `JSValueProtect`.
+    pub unsafe fn from_raw_public(ctx: &'ctx Context, raw: sys::JSValueRef) -> Self {
+        Self { ctx, raw }
+    }
+
     pub fn as_raw(&self) -> sys::JSValueRef {
         self.raw
     }

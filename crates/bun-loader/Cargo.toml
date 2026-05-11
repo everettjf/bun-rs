@@ -1,0 +1,17 @@
+[package]
+name = "bun-loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Module resolver + ESM → IIFE rewriter for bun-rs."
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+oxc_resolver = "11"
+oxc_allocator = "0.129"
+oxc_parser = "0.129"
+oxc_codegen = "0.129"
+oxc_ast = "0.129"
+oxc_span = "0.129"
+bun-transpile = { workspace = true }
