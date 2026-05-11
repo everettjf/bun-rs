@@ -1,0 +1,11 @@
+[package]
+name = "bun-jsc-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Raw FFI bindings to JavaScriptCore C API."
+
+[lib]
+name = "bun_jsc_sys"
+
+[build-dependencies]

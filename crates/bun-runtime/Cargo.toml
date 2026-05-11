@@ -1,0 +1,13 @@
+[package]
+name = "bun-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JS event loop, module loader, and built-in globals for bun-rs."
+
+[dependencies]
+bun-jsc = { workspace = true }
+bun-jsc-sys = { workspace = true }
+bun-transpile = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }

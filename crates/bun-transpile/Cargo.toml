@@ -1,0 +1,18 @@
+[package]
+name = "bun-transpile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TypeScript / JSX transpile (powered by oxc)."
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+oxc = { version = "0.129", features = ["codegen", "transformer", "semantic"] }
+oxc_allocator = "0.129"
+oxc_parser = "0.129"
+oxc_codegen = "0.129"
+oxc_transformer = "0.129"
+oxc_span = "0.129"
+oxc_ast = "0.129"
+oxc_semantic = "0.129"

@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bun-cli",
+    "crates/bun-runtime",
+    "crates/bun-jsc-sys",
+    "crates/bun-jsc",
+    "crates/bun-transpile",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.94"
+license = "MIT"
+repository = "https://github.com/everettjf/bun-rs"
+
+[workspace.dependencies]
+bun-cli = { path = "crates/bun-cli" }
+bun-runtime = { path = "crates/bun-runtime" }
+bun-jsc-sys = { path = "crates/bun-jsc-sys" }
+bun-jsc = { path = "crates/bun-jsc" }
+bun-transpile = { path = "crates/bun-transpile" }
+
+anyhow = "1"
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.dev]
+opt-level = 0
+debug = true

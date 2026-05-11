@@ -1,0 +1,10 @@
+[package]
+name = "bun-jsc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Safe Rust wrapper over JavaScriptCore's C API."
+
+[dependencies]
+bun-jsc-sys = { workspace = true }
+thiserror = { workspace = true }

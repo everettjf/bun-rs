@@ -1,0 +1,5 @@
+[toolchain]
+# oxc requires `if let` match guards (#51114), stabilized in a post-Dec-2025
+# nightly. Pin a recent nightly until the feature lands on stable.
+channel = "nightly"
+components = ["rustfmt", "clippy"]
