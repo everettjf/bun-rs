@@ -144,9 +144,20 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                                     Ok(s) => s,
                                     Err(_) => return,
                                 };
+                                let proto = stream.get_ref().1
+                                    .alpn_protocol()
+                                    .map(|p| p.to_vec())
+                                    .unwrap_or_default();
                                 let io = hyper_util::rt::TokioIo::new(stream);
-                                let _ = hyper::server::conn::http1::Builder::new()
+                                if proto == b"h2" {
+                                    let _ = hyper::server::conn::http2::Builder::new(
+                                        hyper_util::rt::TokioExecutor::new(),
+                                    )
                                     .serve_connection(io, svc).await;
+                                } else {
+                                    let _ = hyper::server::conn::http1::Builder::new()
+                                        .serve_connection(io, svc).await;
+                                }
                             } else {
                                 let io = hyper_util::rt::TokioIo::new(stream);
                                 let _ = hyper::server::conn::http1::Builder::new()
@@ -221,10 +232,12 @@ fn build_tls_config(
         .map_err(|e| format!("parse key: {e}"))?
         .ok_or_else(|| "no private key found in `key`".to_string())?;
 
-    let config = tokio_rustls::rustls::ServerConfig::builder()
+    let mut config = tokio_rustls::rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .map_err(|e| format!("server config: {e}"))?;
+    // ALPN: prefer h2 then http/1.1 so HTTP/2-capable clients upgrade.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(std::sync::Arc::new(config))
 }
 
