@@ -34,6 +34,9 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new(argv: Vec<String>) -> Self {
+        // Install the rustls crypto provider once. Idempotent; required
+        // before any TLS use (Bun.serve tls:, fetch over https).
+        let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
         async_rt::init();
         let ctx = Context::new();
         install_console(&ctx);

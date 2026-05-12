@@ -866,6 +866,92 @@ fn bundle_handles_node_external() {
 }
 
 #[test]
+fn bun_serve_https_tls() {
+    // Generate a self-signed cert with openssl, run a TLS Bun.serve,
+    // verify it serves over https.
+    let dir = tempdir();
+    let key_path = dir.join("key.pem");
+    let cert_path = dir.join("cert.pem");
+    let openssl = std::process::Command::new("openssl")
+        .args([
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-days", "1",
+            "-subj", "/CN=localhost",
+            "-keyout",
+        ])
+        .arg(&key_path)
+        .arg("-out")
+        .arg(&cert_path)
+        .output();
+    let Ok(o) = openssl else {
+        eprintln!("openssl missing; skipping HTTPS test");
+        return;
+    };
+    if !o.status.success() || !cert_path.exists() {
+        eprintln!("openssl failed; skipping HTTPS test");
+        return;
+    }
+    std::fs::write(
+        dir.join("m.ts"),
+        format!(
+            r#"
+            const server = Bun.serve({{
+              port: 0,
+              tls: {{ key: "{key}", cert: "{cert}" }},
+              fetch() {{ return new Response("over tls"); }},
+            }});
+            console.log("PORT:" + server.port);
+            "#,
+            key = key_path.display(),
+            cert = cert_path.display(),
+        ),
+    )
+    .unwrap();
+
+    use std::io::Read;
+    let mut child = bun_rs()
+        .arg(dir.join("m.ts"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut acc = Vec::new();
+    let mut buf = [0u8; 256];
+    let start = std::time::Instant::now();
+    let port = loop {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = child.kill();
+            panic!("no port");
+        }
+        if let Ok(n) = stdout.read(&mut buf) {
+            if n > 0 {
+                acc.extend_from_slice(&buf[..n]);
+                if let Some(p) = std::str::from_utf8(&acc)
+                    .ok()
+                    .and_then(|s| s.lines().find_map(|l| l.strip_prefix("PORT:")))
+                    .and_then(|s| s.trim().parse::<u16>().ok())
+                {
+                    break p;
+                }
+            }
+        }
+    };
+
+    // Use curl since hand-rolling TLS in a test is silly.
+    let curl = std::process::Command::new("curl")
+        .args(["-sk", "--max-time", "3"])
+        .arg(format!("https://127.0.0.1:{port}/"))
+        .output()
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(curl.status.success(), "curl failed: {:?}", curl);
+    assert_eq!(String::from_utf8_lossy(&curl.stdout), "over tls");
+}
+
+#[test]
 fn bun_sqlite_roundtrip() {
     let dir = tempdir();
     std::fs::write(

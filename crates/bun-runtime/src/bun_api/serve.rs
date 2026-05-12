@@ -80,6 +80,18 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             return Err("Bun.serve: `fetch` must be a function".into());
         }
 
+        // Optional TLS config: { tls: { key: "<pem>" | path, cert: "<pem>" | path } }
+        let tls_config: Option<std::sync::Arc<tokio_rustls::rustls::ServerConfig>> =
+            if let Ok(tls_v) = opts_obj.get_property("tls") {
+                if tls_v.is_object() {
+                    Some(build_tls_config(&tls_v).map_err(|e| format!("Bun.serve: tls: {e}"))?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         // Protect the handler so we can hand it to the per-request JS tasks.
         unsafe {
             sys::JSValueProtect(args.context().as_raw(), handler_obj.as_raw() as sys::JSValueRef);
@@ -104,6 +116,7 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 
         // Spawn the accept loop on tokio.
         let stop_clone = stop_flag.clone();
+        let tls_cfg = tls_config.clone();
         crate::async_rt::spawn(async move {
             let listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
@@ -112,6 +125,7 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                     return;
                 }
             };
+            let acceptor = tls_cfg.as_ref().map(|c| tokio_rustls::TlsAcceptor::from(c.clone()));
             loop {
                 if stop_clone.load(Ordering::SeqCst) { break; }
                 tokio::select! {
@@ -120,21 +134,27 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                             Ok(p) => p,
                             Err(_) => continue,
                         };
-                        let io = hyper_util::rt::TokioIo::new(stream);
+                        let acceptor = acceptor.clone();
                         let stop = stop_clone.clone();
                         tokio::spawn(async move {
-                            let svc = service_fn(move |req| {
-                                let _ = &stop;
-                                handle_request(handler_raw, req)
-                            });
-                            let _ = hyper::server::conn::http1::Builder::new()
-                                .serve_connection(io, svc)
-                                .await;
+                            let _ = &stop;
+                            let svc = service_fn(move |req| handle_request(handler_raw, req));
+                            if let Some(acc) = acceptor {
+                                let stream = match acc.accept(stream).await {
+                                    Ok(s) => s,
+                                    Err(_) => return,
+                                };
+                                let io = hyper_util::rt::TokioIo::new(stream);
+                                let _ = hyper::server::conn::http1::Builder::new()
+                                    .serve_connection(io, svc).await;
+                            } else {
+                                let io = hyper_util::rt::TokioIo::new(stream);
+                                let _ = hyper::server::conn::http1::Builder::new()
+                                    .serve_connection(io, svc).await;
+                            }
                         });
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
-                        // Periodic wake to check stop_flag.
-                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {}
                 }
             }
         });
@@ -177,6 +197,49 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 
         Ok(v)
     });
+}
+
+fn build_tls_config(
+    tls_v: &Value<'_>,
+) -> Result<std::sync::Arc<tokio_rustls::rustls::ServerConfig>, String> {
+    use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+    let obj = tls_v.to_object().map_err(|e| e.to_string())?;
+    let key_v = obj.get_property("key").map_err(|e| e.to_string())?;
+    let cert_v = obj.get_property("cert").map_err(|e| e.to_string())?;
+    let key_pem = read_pem_or_path(&key_v)?;
+    let cert_pem = read_pem_or_path(&cert_v)?;
+
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut cert_pem.as_slice())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("parse cert: {e}"))?;
+    if certs.is_empty() {
+        return Err("no certificates found in `cert`".into());
+    }
+    let key = rustls_pemfile::private_key(&mut key_pem.as_slice())
+        .map_err(|e| format!("parse key: {e}"))?
+        .ok_or_else(|| "no private key found in `key`".to_string())?;
+
+    let config = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| format!("server config: {e}"))?;
+    Ok(std::sync::Arc::new(config))
+}
+
+fn read_pem_or_path(v: &Value<'_>) -> Result<Vec<u8>, String> {
+    if let Some(b) = v.typed_array_bytes() {
+        return Ok(b.to_vec());
+    }
+    let s = v.to_string();
+    // If the value looks like a PEM blob, use it directly. Otherwise treat
+    // as a filesystem path.
+    if s.contains("-----BEGIN ") {
+        Ok(s.into_bytes())
+    } else {
+        std::fs::read(&s).map_err(|e| format!("read {s}: {e}"))
+    }
 }
 
 async fn handle_request(
