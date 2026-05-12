@@ -866,6 +866,34 @@ fn bundle_handles_node_external() {
 }
 
 #[test]
+fn bun_sqlite_roundtrip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { Database } from "bun:sqlite";
+        const db = new Database(":memory:");
+        db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, n TEXT)");
+        const ins = db.query("INSERT INTO t (n) VALUES (?)");
+        ins.run("a"); ins.run("b"); ins.run("c");
+        const rows = db.query("SELECT n FROM t ORDER BY id").all();
+        if (rows.length !== 3) throw new Error("len " + rows.length);
+        if (rows.map((r:any) => r.n).join(",") !== "a,b,c") throw new Error("vals");
+        const one = db.query("SELECT n FROM t WHERE id = ?").get(2);
+        if (one.n !== "b") throw new Error("get");
+        const named = db.query("SELECT n FROM t WHERE n = :x").get({ x: "c" });
+        if (named.n !== "c") throw new Error("named");
+        db.close();
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn readline_callback_form() {
     use std::io::Write;
     let dir = tempdir();

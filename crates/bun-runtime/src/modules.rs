@@ -111,6 +111,17 @@ fn load_module<'ctx>(
             },
         ));
     }
+    if let Some(name) = spec.strip_prefix("bun:") {
+        if let Some(v) = crate::bun_api::load_bun_builtin(ctx, name) {
+            return Ok(v);
+        }
+        return Err(LoaderRuntimeError::Resolve(
+            bun_loader::ResolveError::NotFound {
+                spec: spec.to_string(),
+                from: importer.to_path_buf(),
+            },
+        ));
+    }
     if let Some(v) = crate::node_builtins::load(ctx, spec) {
         // Allow bare `import "path"` etc. as a convenience.
         return Ok(v);

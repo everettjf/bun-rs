@@ -11,6 +11,37 @@ use bun_jsc::{Callback, Context, Value};
 
 mod file;
 pub mod serve;
+mod sqlite;
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+thread_local! {
+    static BUN_BUILTINS: RefCell<HashMap<&'static str, bun_jsc_sys::JSValueRef>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Load `bun:<name>` (e.g. `bun:sqlite`). Returns None if the name isn't a
+/// recognized bun builtin — caller should treat as resolve error.
+pub fn load_bun_builtin<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
+    let builder: fn(&Context) -> Value<'_> = match name {
+        "sqlite" | "bun:sqlite" => sqlite::build,
+        _ => return None,
+    };
+    let key: &'static str = match name {
+        "sqlite" | "bun:sqlite" => "sqlite",
+        _ => return None,
+    };
+    let cached = BUN_BUILTINS.with(|m| m.borrow().get(key).copied());
+    if let Some(raw) = cached {
+        return Some(unsafe { Value::from_raw_public(ctx, raw) });
+    }
+    let v = builder(ctx);
+    let raw = v.as_raw();
+    unsafe { bun_jsc_sys::JSValueProtect(ctx.as_raw(), raw) };
+    BUN_BUILTINS.with(|m| m.borrow_mut().insert(key, raw));
+    Some(v)
+}
 
 pub fn install_bun(ctx: &Context) {
     let bun_v = ctx.eval("({})", Some("[Bun]")).unwrap();
