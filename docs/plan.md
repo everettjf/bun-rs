@@ -104,11 +104,20 @@ bun-rs/
 
 ## 5. 当前进度
 
-### 0.2 进行中
-- ✅ **B. Sourcemap 错误回映射**(完成)
-- ✅ **A.1–A.4 Web Streams**:`ReadableStream` / `WritableStream` / `TransformStream` + reader/writer + `pipeTo` / `pipeThrough` / `tee` / `from(iter)` + async-iteration。`Response.body` 现在是 ReadableStream。JS polyfill。
-- ⏭ **下次:A.5 - node:stream + fs.createReadStream(Rust 端打通)**
-- 之后:C — `Bun.serve` 并发(hyper)+ `AbortController`,然后发 0.2.0 tag
+### 0.2.0 已发布(`v0.2.0` tag)
+- ✅ B Sourcemap、A.1–A.5 Web Streams + node:stream + fs streams
+- ✅ C AbortController + Bun.serve 并发(hyper)
+- ✅ CHANGELOG/README/version 同步
+
+### 0.3 进行中
+- ✅ **0.3.1 `bun-rs test`** — Jest-compatible runner(describe/test/expect 16+ matcher / .not / .resolves / .rejects)
+- ✅ **0.3.2 WebSocket client** + 事件循环修复(timer 不再阻塞 async drain)
+- ⏭ **下次会话起步**:
+  - 0.3.3 fetch + AbortSignal 集成
+  - 0.3.4 node:tty + node:readline + 在 REPL 用上
+  - 0.3.5 bundler MVP(`bun-rs build`,wrap rolldown)
+  - 0.3.6 live ESM bindings(rewriter 改 `const x = m.x` 为读取 m.x at use site)
+  - 然后发 0.3.0 tag
 
 ### Day 5(2026-05-12):0.1.0 发布
 - ✅ **Buffer**:JS class extends Uint8Array,从 Rust 零拷贝 (`JSObjectMakeTypedArrayWithBytesNoCopy`),utf8/hex/base64/latin1 encoding round-trip
