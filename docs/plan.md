@@ -109,15 +109,20 @@ bun-rs/
 - ✅ C AbortController + Bun.serve 并发(hyper)
 - ✅ CHANGELOG/README/version 同步
 
-### 0.3 进行中
-- ✅ **0.3.1 `bun-rs test`** — Jest-compatible runner(describe/test/expect 16+ matcher / .not / .resolves / .rejects)
-- ✅ **0.3.2 WebSocket client** + 事件循环修复(timer 不再阻塞 async drain)
+### 0.3.0 已发布(`v0.3.0` tag)
+- ✅ test runner / bundler / WebSocket / fetch+abort / node:readline / 事件循环修复
+- ⏭ Live ESM bindings 推迟到 0.4(需要 symbol-level rewriter)
+
+### 0.5 进行中
+- ✅ **0.5.1 `bun:sqlite`** — rusqlite,Database/query/prepare/all/get/run,positional + named params,Blob via Buffer
 - ⏭ **下次会话起步**:
-  - 0.3.3 fetch + AbortSignal 集成
-  - 0.3.4 node:tty + node:readline + 在 REPL 用上
-  - 0.3.5 bundler MVP(`bun-rs build`,wrap rolldown)
-  - 0.3.6 live ESM bindings(rewriter 改 `const x = m.x` 为读取 m.x at use site)
-  - 然后发 0.3.0 tag
+  - 0.5.2 HTTPS server(Bun.serve tls 选项,接 tokio-rustls)
+  - 0.5.3 Worker(独立线程跑 second JSC Context + 消息传递)
+  - 0.5.x bun:ffi(dlopen + 简单 primitives)、HTTP/2
+- **0.4 推迟**:`bun install` 单独排期(8-12 会话)
+
+### 1.0 收尾(roadmap)
+- 稳定化、fuzzing、预编译二进制分发、benchmark 对比 Node/Bun/Deno、npm 兼容矩阵
 
 ### Day 5(2026-05-12):0.1.0 发布
 - ✅ **Buffer**:JS class extends Uint8Array,从 Rust 零拷贝 (`JSObjectMakeTypedArrayWithBytesNoCopy`),utf8/hex/base64/latin1 encoding round-trip
