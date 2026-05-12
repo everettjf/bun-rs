@@ -2,7 +2,14 @@
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** MVP runtime + most of P2 + most of P3 in 3 days. See [`docs/plan.md`](docs/plan.md).
+**Status:** 0.1.0 — runs TypeScript + ESM, has a useful Web / `node:*` /
+`Bun.*` surface, async I/O via tokio. See:
+
+- [`docs/tutorial.md`](docs/tutorial.md) — 30-minute walk-through
+- [`docs/guide.md`](docs/guide.md) — full reference: what works, what doesn't
+- [`docs/roadmap.md`](docs/roadmap.md) — what's coming in 0.2 / 0.3 / 1.0
+- [`docs/build.md`](docs/build.md) — build prereqs for macOS / Linux
+- [`CHANGELOG.md`](CHANGELOG.md) — version history
 
 ## Quick start
 
@@ -50,12 +57,15 @@ cargo build --release
 |---|---|
 | `node:path` | join / resolve / normalize / dirname / basename / extname / isAbsolute / relative, posix + win32 |
 | `node:os` | platform / arch / type / release / hostname / cpus / totalmem / userInfo / EOL |
-| `node:fs` | sync: readFile (Buffer / utf-8 / hex / latin1) / writeFile (Buffer / string) / appendFile / exists / stat / readdir / mkdir / rm / rename / unlink / copyFile / realpath / mkdtemp; `fs.promises` mirrors sync |
+| `node:fs` | sync: readFile / writeFile / appendFile / exists / stat / readdir / mkdir / rm / rename / unlink / copyFile / realpath / mkdtemp; **`fs.promises` is genuinely async** (tokio spawn_blocking) |
 | `node:buffer` | full `Buffer` class (zero-copy from Rust) |
-| `node:events` | full `EventEmitter` (on/once/off/emit/prependListener/listenerCount/eventNames) |
+| `node:events` | full `EventEmitter` |
 | `node:util` | promisify / callbackify / inspect / format / debuglog / types.isX / inherits |
 | `node:crypto` | createHash (md5/sha1/sha256/sha384/sha512) / createHmac / randomBytes / randomUUID / randomInt / timingSafeEqual |
 | `node:child_process` | spawnSync / execSync / exec(cb) |
+| `node:assert` | strict + non-strict, deep[Strict]Equal, throws/rejects, match |
+| `node:querystring` | parse / stringify / escape / unescape |
+| `node:url` | URL, URLSearchParams, fileURLToPath, pathToFileURL |
 
 ### `Bun.*` namespace
 
@@ -104,7 +114,7 @@ crates/
 ```sh
 cargo build --workspace             # debug build
 cargo build --release -p bun-cli    # ~3.5MB single binary
-cargo test --workspace              # 85+ tests, all green on macOS arm64
+cargo test --workspace              # 90+ tests, all green on macOS arm64
 ```
 
 Toolchain: nightly Rust (oxc uses `if let` match guards). See

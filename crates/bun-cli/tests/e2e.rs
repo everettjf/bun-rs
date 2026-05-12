@@ -851,6 +851,116 @@ fn writefile_accepts_buffer() {
 }
 
 #[test]
+fn node_assert_strict_and_deep() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import assert from "node:assert";
+        assert.strictEqual(1 + 1, 2);
+        assert.deepStrictEqual({a:1,b:[2,3]}, {a:1,b:[2,3]});
+        assert.throws(() => { throw new Error("boom"); }, /boom/);
+        await assert.rejects(async () => { throw new Error("async"); }, /async/);
+        try {
+            assert.strictEqual(1, 2);
+            throw new Error("should have failed");
+        } catch (e: any) {
+            if (e.name !== "AssertionError") throw new Error("wrong error: " + e.name);
+        }
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_querystring_roundtrip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import qs from "node:querystring";
+        const o = qs.parse("a=1&b=hello%20world&a=2");
+        if (o.b !== "hello world") throw new Error("b: " + o.b);
+        if (!Array.isArray(o.a) || o.a.join(",") !== "1,2") throw new Error("a: " + o.a);
+        const s = qs.stringify({x: 1, y: "a b"});
+        if (s !== "x=1&y=a%20b") throw new Error("stringify: " + s);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_url_helpers() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { fileURLToPath, pathToFileURL, URL } from "node:url";
+        if (fileURLToPath("file:///x/y") !== "/x/y") throw new Error("fileURLToPath");
+        const u = pathToFileURL("/x/y file.txt");
+        if (!u.href.startsWith("file:///x/y")) throw new Error("pathToFileURL: " + u.href);
+        if (!u.href.includes("%20")) throw new Error("not percent-encoded: " + u.href);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn process_stdout_stderr_write() {
+    let out = bun_rs()
+        .args(["-e", "process.stdout.write('out'); process.stderr.write('err');"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "out");
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "err");
+}
+
+#[test]
+fn fs_promises_actually_async() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { promises as fs } from "node:fs";
+        import path from "node:path";
+        const p = path.join(process.cwd(), "f.txt");
+        const t0 = Date.now();
+        let timerFired = false;
+        setTimeout(() => { timerFired = true; }, 1);
+        await fs.writeFile(p, Buffer.from([1,2,3,4,5]));
+        const b = await fs.readFile(p);
+        if (!Buffer.isBuffer(b)) throw new Error("not buffer");
+        if (b.length !== 5 || b[0] !== 1) throw new Error("contents");
+        await fs.unlink(p);
+        // Concurrent timer should have fired during the awaits (cooperative).
+        if (!timerFired) throw new Error("timer didn't fire; fs.promises blocked");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn node_events_emitter() {
     let dir = tempdir();
     std::fs::write(
@@ -1001,10 +1111,10 @@ fn node_fs_promises_await() {
         import { promises as fs } from "node:fs";
         import path from "node:path";
         const p = path.join(process.cwd(), "promise-test.txt");
-        await fs.writeFileSync(p, "abc");
-        const got = await fs.readFileSync(p, "utf8");
+        await fs.writeFile(p, "abc");
+        const got = await fs.readFile(p, "utf8");
         if (got !== "abc") throw new Error("got " + got);
-        await fs.unlinkSync(p);
+        await fs.unlink(p);
         console.log("ok");
         "#,
     )

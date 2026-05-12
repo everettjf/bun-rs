@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use bun_jsc::{Context, Value};
 use bun_jsc_sys as sys;
 
+pub mod assert;
 pub mod buffer;
 pub mod child_process;
 pub mod crypto;
@@ -17,6 +18,8 @@ pub mod events;
 pub mod fs;
 pub mod os;
 pub mod path;
+pub mod querystring;
+pub mod url;
 pub mod util;
 
 // Per-thread cache of built builtin exports. The Value's raw ref is kept
@@ -39,6 +42,9 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "util" | "node:util" => util::build,
         "crypto" | "node:crypto" => crypto::build,
         "child_process" | "node:child_process" => child_process::build,
+        "assert" | "node:assert" => assert::build,
+        "querystring" | "node:querystring" => querystring::build,
+        "url" | "node:url" => url::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -65,6 +71,9 @@ fn canonical_name(s: &str) -> &'static str {
         "util" | "node:util" => "util",
         "crypto" | "node:crypto" => "crypto",
         "child_process" | "node:child_process" => "child_process",
+        "assert" | "node:assert" => "assert",
+        "querystring" | "node:querystring" => "querystring",
+        "url" | "node:url" => "url",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }
