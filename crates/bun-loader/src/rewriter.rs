@@ -16,7 +16,7 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     BindingIdentifier, Declaration, ExportDefaultDeclarationKind, ImportDeclarationSpecifier,
-    ImportExpression, ModuleExportName, Statement,
+    ImportExpression, MetaProperty, ModuleExportName, Statement,
 };
 use oxc_ast_visit::Visit;
 use oxc_parser::Parser;
@@ -67,11 +67,17 @@ fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
         return Err(RewriteError::Parse(msg));
     }
 
-    struct Spot {
-        start: u32,
-        end: u32,
-        src_start: u32,
-        src_end: u32,
+    enum Spot {
+        DynamicImport {
+            start: u32,
+            end: u32,
+            src_start: u32,
+            src_end: u32,
+        },
+        ImportMeta {
+            start: u32,
+            end: u32,
+        },
     }
     struct Collect {
         spots: Vec<Spot>,
@@ -80,12 +86,22 @@ fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
         fn visit_import_expression(&mut self, it: &ImportExpression<'a>) {
             let sp = it.span;
             let src_sp = it.source.span();
-            self.spots.push(Spot {
+            self.spots.push(Spot::DynamicImport {
                 start: sp.start,
                 end: sp.end,
                 src_start: src_sp.start,
                 src_end: src_sp.end,
             });
+        }
+
+        fn visit_meta_property(&mut self, it: &MetaProperty<'a>) {
+            // `import.meta` — meta="import", property="meta"
+            if it.meta.name == "import" && it.property.name == "meta" {
+                self.spots.push(Spot::ImportMeta {
+                    start: it.span.start,
+                    end: it.span.end,
+                });
+            }
         }
     }
     let mut c = Collect { spots: Vec::new() };
@@ -98,11 +114,26 @@ fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
     // Apply end → start so earlier spans remain valid.
     let mut out = source.to_string();
     let mut spots = c.spots;
-    spots.sort_by_key(|s| std::cmp::Reverse(s.start));
+    spots.sort_by_key(|s| std::cmp::Reverse(match s {
+        Spot::DynamicImport { start, .. } => *start,
+        Spot::ImportMeta { start, .. } => *start,
+    }));
     for s in spots {
-        let arg_text = &source[s.src_start as usize..s.src_end as usize];
-        let replacement = format!("__bun_require({arg_text}, __filename)");
-        out.replace_range(s.start as usize..s.end as usize, &replacement);
+        match s {
+            Spot::DynamicImport {
+                start,
+                end,
+                src_start,
+                src_end,
+            } => {
+                let arg_text = &source[src_start as usize..src_end as usize];
+                let replacement = format!("__bun_require({arg_text}, __filename)");
+                out.replace_range(start as usize..end as usize, &replacement);
+            }
+            Spot::ImportMeta { start, end } => {
+                out.replace_range(start as usize..end as usize, "__bun_meta");
+            }
+        }
     }
     Ok(out)
 }

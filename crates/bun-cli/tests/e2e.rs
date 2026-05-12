@@ -482,6 +482,24 @@ fn dynamic_import_with_then() {
 }
 
 #[test]
+fn import_meta_url_and_friends() {
+    let dir = tempdir();
+    let file = dir.join("m.ts");
+    std::fs::write(
+        &file,
+        "console.log(import.meta.url);\n\
+         console.log(import.meta.filename);\n\
+         console.log(import.meta.dirname);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(&file).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("file:///"), "url should be file:// : {s}");
+    assert!(s.contains("m.ts"), "should mention file: {s}");
+}
+
+#[test]
 fn esm_missing_specifier_errors() {
     let dir = tempdir();
     std::fs::write(

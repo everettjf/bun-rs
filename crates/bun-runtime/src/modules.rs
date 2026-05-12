@@ -130,8 +130,9 @@ fn load_module<'ctx>(
     // Wrap in an async function. The body uses `await __bun_require(...)`
     // for static imports, and bare `__bun_require(...)` is itself a thenable
     // call so `import()` (rewritten to `__bun_require()`) works too.
+    // `__bun_meta` carries `import.meta` (rewritten in the source).
     let wrapped = format!(
-        "(async function (__exports, __bun_require, __filename, __dirname) {{\n{}\n}})",
+        "(async function (__exports, __bun_require, __filename, __dirname, __bun_meta) {{\n{}\n}})",
         prepared.rewritten
     );
 
@@ -160,9 +161,10 @@ fn load_module<'ctx>(
 
     let filename = Value::new_string(ctx, abs.to_str().unwrap_or(""));
     let dirname = Value::new_string(ctx, parent.to_str().unwrap_or(""));
+    let meta = build_import_meta(ctx, &abs);
 
     let body_promise = factory
-        .call(None, &[exports_val, require_fn, filename, dirname])
+        .call(None, &[exports_val, require_fn, filename, dirname, meta])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),
@@ -189,6 +191,43 @@ fn load_module<'ctx>(
         })?;
 
     Ok(chained)
+}
+
+fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
+    let url = path_to_file_url(abs);
+    let obj_val = ctx
+        .eval("({})", Some("[import-meta]"))
+        .expect("create import.meta obj");
+    let obj = obj_val.to_object().expect("to_object");
+    obj.set_property("url", &Value::new_string(ctx, &url))
+        .expect("set url");
+    obj.set_property("main", &Value::new_bool(ctx, false))
+        .expect("set main");
+    // Spec also defines `dirname`/`filename` in Node ≥ 21.2.
+    obj.set_property("dirname", &Value::new_string(ctx, abs.parent().map_or("", |p| p.to_str().unwrap_or(""))))
+        .expect("set dirname");
+    obj.set_property("filename", &Value::new_string(ctx, abs.to_str().unwrap_or("")))
+        .expect("set filename");
+    obj.as_value()
+}
+
+fn path_to_file_url(p: &Path) -> String {
+    // Minimal RFC-8089 file URL builder: percent-encode unsafe bytes.
+    let s = p.to_string_lossy();
+    let mut out = String::from("file://");
+    for c in s.chars() {
+        match c {
+            '/' | '.' | '-' | '_' | '~' => out.push(c),
+            c if c.is_ascii_alphanumeric() => out.push(c),
+            c => {
+                let mut buf = [0u8; 4];
+                for b in c.encode_utf8(&mut buf).bytes() {
+                    out.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Wait for a JS Promise to settle, driving the event loop in the meantime.
