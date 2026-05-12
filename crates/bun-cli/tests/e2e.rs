@@ -866,6 +866,61 @@ fn bundle_handles_node_external() {
 }
 
 #[test]
+fn bun_ffi_basic_calls() {
+    // Compile a tiny C library and verify int/double/cstring FFI.
+    let dir = tempdir();
+    let src = dir.join("lib.c");
+    std::fs::write(
+        &src,
+        r#"
+        #include <stdio.h>
+        int add(int a, int b) { return a + b; }
+        double sub(double a, double b) { return a - b; }
+        const char* greet(const char* name) {
+            static char buf[256];
+            snprintf(buf, sizeof(buf), "hi, %s", name);
+            return buf;
+        }
+        "#,
+    )
+    .unwrap();
+    let lib = dir.join("lib.dylib");
+    let cc = std::process::Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(&lib)
+        .arg(&src)
+        .output();
+    let Ok(o) = cc else { eprintln!("cc missing; skipping FFI test"); return; };
+    if !o.status.success() || !lib.exists() {
+        eprintln!("cc failed; skipping FFI test");
+        return;
+    }
+    std::fs::write(
+        dir.join("m.ts"),
+        format!(
+            r#"
+            import {{ dlopen, FFIType }} from "bun:ffi";
+            const lib = dlopen("{}", {{
+                add: {{ args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 }},
+                sub: {{ args: [FFIType.f64, FFIType.f64], returns: FFIType.f64 }},
+                greet: {{ args: [FFIType.cstring], returns: FFIType.cstring }},
+            }});
+            if (lib.symbols.add(2, 3) !== 5) throw new Error("add");
+            if (Math.abs(lib.symbols.sub(5, 2) - 3) > 1e-9) throw new Error("sub");
+            if (lib.symbols.greet("bun") !== "hi, bun") throw new Error("greet");
+            lib.close();
+            console.log("ok");
+            "#,
+            lib.display(),
+        ),
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn worker_roundtrip() {
     let dir = tempdir();
     std::fs::write(

@@ -9,6 +9,7 @@
 
 use bun_jsc::{Callback, Context, Value};
 
+mod ffi;
 mod file;
 pub mod serve;
 mod sqlite;
@@ -26,10 +27,12 @@ thread_local! {
 pub fn load_bun_builtin<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
     let builder: fn(&Context) -> Value<'_> = match name {
         "sqlite" | "bun:sqlite" => sqlite::build,
+        "ffi" | "bun:ffi" => ffi::build,
         _ => return None,
     };
     let key: &'static str = match name {
         "sqlite" | "bun:sqlite" => "sqlite",
+        "ffi" | "bun:ffi" => "ffi",
         _ => return None,
     };
     let cached = BUN_BUILTINS.with(|m| m.borrow().get(key).copied());
