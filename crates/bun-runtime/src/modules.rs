@@ -339,40 +339,30 @@ pub fn await_promise<'ctx>(
     std::mem::forget(reject_cb);
 
     while outcome.borrow().is_none() {
-        // Nudge microtask drain: a no-op script forces JSC to flush its
-        // queue. Cheap and reliable.
+        // Microtask drain via a no-op eval.
         let _ = ctx.eval("undefined", Some("[microtask-drain]"));
-        if outcome.borrow().is_some() {
-            break;
-        }
-        // Pump async-runtime completions (e.g. resolved fetch).
+        if outcome.borrow().is_some() { break; }
+
+        // Try work in priority order: async completions, timers due now.
         let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
-        if async_did {
-            continue;
-        }
-        // Pump pending Bun.serve requests — important for cases like
-        // `await fetch("http://127.0.0.1:" + server.port)` where the
-        // server can't respond unless we drain its queue.
-        let server_did =
-            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(5));
-        if server_did {
-            continue;
-        }
-        // Otherwise fire next timer.
-        if !run_one_tick(ctx) {
-            // No timer, no async task we could deliver, no completion —
-            // and yet the promise is pending. If async work is still in
-            // flight we just yield briefly and try again.
-            if crate::async_rt::has_pending_async()
-                || crate::bun_api::serve::any_active()
-            {
-                std::thread::sleep(std::time::Duration::from_millis(2));
-                continue;
-            }
+        if async_did { continue; }
+        let timer_did = crate::timers::run_one_tick(ctx);
+        if timer_did { continue; }
+
+        // Nothing immediately ready; wait briefly.
+        let can_make_progress = crate::async_rt::has_pending_async()
+            || crate::bun_api::serve::any_active()
+            || crate::timers::next_timer_deadline().is_some();
+        if !can_make_progress {
             return Err(
-                "event loop deadlocked: promise pending with no work to do".to_string()
+                "event loop deadlocked: promise pending with no work to do".to_string(),
             );
         }
+        let nap = crate::timers::next_timer_deadline()
+            .unwrap_or(std::time::Duration::from_millis(20))
+            .min(std::time::Duration::from_millis(20))
+            .max(std::time::Duration::from_millis(1));
+        std::thread::sleep(nap);
     }
 
     let taken = outcome.borrow_mut().take().unwrap();

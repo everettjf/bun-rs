@@ -163,28 +163,30 @@ fn has_pending_timers() -> bool {
 /// Bun.serve requests, until nothing is in flight.
 pub fn run_event_loop(ctx: &Context) {
     loop {
-        let timer_did_work = run_one_tick(ctx);
-        let async_did_work = crate::async_rt::drain_js_tasks(ctx) > 0;
-        let server_did_work =
-            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(20));
-        let servers_active = crate::bun_api::serve::any_active();
+        let timer_did = run_one_tick(ctx);
+        let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
+        let server_active = crate::bun_api::serve::any_active();
         let async_pending = crate::async_rt::has_pending_async();
-        if !timer_did_work
-            && !async_did_work
-            && !server_did_work
-            && !servers_active
-            && !async_pending
-        {
+        if timer_did || async_did {
+            continue;
+        }
+        if !server_active && !async_pending && next_timer_deadline().is_none() {
             return;
         }
+        // Nothing immediately ready; wait briefly. Cap at the next timer's
+        // deadline so we don't oversleep. 10ms floor keeps the spin cheap.
+        let nap = next_timer_deadline()
+            .unwrap_or(std::time::Duration::from_millis(50))
+            .min(std::time::Duration::from_millis(50))
+            .max(std::time::Duration::from_millis(1));
+        std::thread::sleep(nap);
     }
 }
 
-/// Fire the next due timer (sleeping until its deadline if needed). Returns
-/// `false` when there are no pending timers.
-///
-/// This is the building block both [`run_event_loop`] and
-/// [`crate::modules::await_promise`] sit on top of.
+/// Fire the next timer if its deadline has already passed. Returns `false`
+/// when no timer is due (either the queue is empty or the earliest deadline
+/// is still in the future). Never sleeps — the caller decides when to wait
+/// so it can also serve other event sources (async tasks, servers).
 pub fn run_one_tick(ctx: &Context) -> bool {
     loop {
         let next = TIMERS.with(|t| t.borrow_mut().pop());
@@ -197,9 +199,10 @@ pub fn run_one_tick(ctx: &Context) -> bool {
             continue;
         }
 
-        let now = Instant::now();
-        if entry.deadline > now {
-            std::thread::sleep(entry.deadline - now);
+        if entry.deadline > Instant::now() {
+            // Not yet due — put it back and let the caller decide.
+            TIMERS.with(|t| t.borrow_mut().push(entry));
+            return false;
         }
 
         unsafe {
@@ -237,6 +240,16 @@ pub fn run_one_tick(ctx: &Context) -> bool {
         }
         return true;
     }
+}
+
+/// How long until the earliest pending timer fires (None if none). Used by
+/// callers that want to nap until a deadline.
+pub fn next_timer_deadline() -> Option<std::time::Duration> {
+    TIMERS.with(|t| {
+        t.borrow()
+            .peek()
+            .map(|entry| entry.deadline.saturating_duration_since(Instant::now()))
+    })
 }
 
 #[allow(dead_code)]

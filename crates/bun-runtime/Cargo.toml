@@ -22,6 +22,8 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "server-graceful"] }
 http-body-util = "0.1"
 bytes = "1"
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["rustls-tls-webpki-roots", "connect"] }
+futures-util = "0.3"
 md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
