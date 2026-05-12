@@ -16,6 +16,7 @@ pub mod child_process;
 pub mod crypto;
 pub mod events;
 pub mod fs;
+pub mod http;
 pub mod os;
 pub mod path;
 pub mod querystring;
@@ -51,6 +52,7 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "stream" | "node:stream" => stream::build,
         "readline" | "node:readline" => readline::build,
         "zlib" | "node:zlib" => zlib::build,
+        "http" | "node:http" => http::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -83,6 +85,7 @@ fn canonical_name(s: &str) -> &'static str {
         "stream" | "node:stream" => "stream",
         "readline" | "node:readline" => "readline",
         "zlib" | "node:zlib" => "zlib",
+        "http" | "node:http" => "http",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }
