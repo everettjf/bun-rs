@@ -104,7 +104,12 @@ bun-rs/
 
 ## 5. 当前进度
 
-### Day 4(2026-05-12):Buffer + 全套 node:* + tokio async
+### 0.2 进行中 — B 完成(2026-05-12 晚)
+- ✅ **B. Sourcemap 错误回映射**:rewriter 输出 `line_map` + thread-local 注册 + `remap_stack` 把 JSC frame 翻译回 .ts 行。throw at bad.ts:4 → stack 显示 `bad.ts:4`(不是 wrapper 行号)。合成 frame 标 `<bunrs-internal>`。
+- ⏭ **下次:A — Web Streams + node:stream(基础)**
+- 之后:C — Bun.serve 并发(hyper)+ AbortController
+
+### Day 5(2026-05-12):0.1.0 发布
 - ✅ **Buffer**:JS class extends Uint8Array,从 Rust 零拷贝 (`JSObjectMakeTypedArrayWithBytesNoCopy`),utf8/hex/base64/latin1 encoding round-trip
 - ✅ **二进制 I/O**:`fs.readFileSync` 无 encoding → Buffer;`fs.writeFileSync` 接受 Buffer;`Bun.file.bytes`/`arrayBuffer` 零拷贝;`fetch` 响应保留原始 bytes
 - ✅ **node:events** EventEmitter 全部接口
