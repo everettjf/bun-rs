@@ -583,6 +583,52 @@ fn node_os_basic() {
 }
 
 #[test]
+fn web_url_parse_and_search_params() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            const u = new URL("https://user:pw@example.com:8080/foo/bar?x=1&y=2#h");
+            console.log(u.protocol, u.hostname, u.port, u.pathname, u.search, u.hash, u.username);
+            console.log(u.searchParams.get("x"), u.searchParams.get("y"));
+            const sp = new URLSearchParams("a=hello%20world&b=2");
+            console.log(sp.get("a"), sp.get("b"));
+            sp.set("a", "z"); sp.append("a", "y");
+            console.log(sp.getAll("a").join(","));
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("https: example.com 8080 /foo/bar ?x=1&y=2 #h user"), "got: {s}");
+    assert!(s.contains("1 2"), "got: {s}");
+    assert!(s.contains("hello world 2"), "got: {s}");
+    assert!(s.contains("z,y"), "got: {s}");
+}
+
+#[test]
+fn web_headers_and_response_json() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            const h = new Headers({ "Content-Type": "text/plain", "X-Foo": "1" });
+            h.append("X-Foo", "2");
+            console.log(h.get("content-type"), h.get("x-foo"));
+            const r = Response.json({ ok: true, n: 7 });
+            r.json().then(v => console.log("ok="+v.ok, "n="+v.n));
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("text/plain 1, 2"), "got: {s}");
+    assert!(s.contains("ok=true n=7"), "got: {s}");
+}
+
+#[test]
 fn node_fs_roundtrip() {
     let dir = tempdir();
     std::fs::write(

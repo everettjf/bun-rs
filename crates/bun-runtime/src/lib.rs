@@ -15,6 +15,7 @@ mod node_builtins;
 mod process_global;
 mod repl;
 mod timers;
+mod web;
 
 pub use console::install_console;
 pub use modules::{install_module_loader, run_entry, LoaderRuntimeError};
@@ -33,6 +34,7 @@ impl Runtime {
         install_process(&ctx, argv);
         install_timers(&ctx);
         install_module_loader(&ctx);
+        web::install_web(&ctx);
         install_global_this(&ctx);
         Self { ctx }
     }

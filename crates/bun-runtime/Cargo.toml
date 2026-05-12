@@ -12,3 +12,6 @@ bun-transpile = { workspace = true }
 bun-loader = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+url = "2"
+serde_json = "1"
