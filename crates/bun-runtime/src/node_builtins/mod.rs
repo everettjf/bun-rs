@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use bun_jsc::{Context, Value};
 use bun_jsc_sys as sys;
 
+pub mod fs;
 pub mod os;
 pub mod path;
 
@@ -27,6 +28,7 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
     let builder: fn(&Context) -> Value<'_> = match name {
         "path" | "node:path" => path::build,
         "os" | "node:os" => os::build,
+        "fs" | "node:fs" => fs::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -47,6 +49,7 @@ fn canonical_name(s: &str) -> &'static str {
     match s {
         "path" | "node:path" => "path",
         "os" | "node:os" => "os",
+        "fs" | "node:fs" => "fs",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }

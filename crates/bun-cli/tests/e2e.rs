@@ -583,6 +583,65 @@ fn node_os_basic() {
 }
 
 #[test]
+fn node_fs_roundtrip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import fs from "node:fs";
+        import path from "node:path";
+        const dir = path.join(process.cwd(), "tmp-bunrs-fs");
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, "a.txt"), "hello");
+        const s = fs.readFileSync(path.join(dir, "a.txt"), "utf8");
+        if (s !== "hello") throw new Error("contents " + s);
+        const st = fs.statSync(path.join(dir, "a.txt"));
+        if (st.size !== 5) throw new Error("size " + st.size);
+        if (!st.isFile()) throw new Error("isFile");
+        const entries = fs.readdirSync(dir);
+        if (!entries.includes("a.txt")) throw new Error("listing");
+        fs.rmSync(dir, { recursive: true });
+        if (fs.existsSync(dir)) throw new Error("not removed");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_fs_promises_await() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { promises as fs } from "node:fs";
+        import path from "node:path";
+        const p = path.join(process.cwd(), "promise-test.txt");
+        await fs.writeFileSync(p, "abc");
+        const got = await fs.readFileSync(p, "utf8");
+        if (got !== "abc") throw new Error("got " + got);
+        await fs.unlinkSync(p);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn import_meta_url_and_friends() {
     let dir = tempdir();
     let file = dir.join("m.ts");
