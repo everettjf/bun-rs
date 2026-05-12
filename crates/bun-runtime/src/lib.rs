@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use bun_jsc::{Callback, Context, JsException, Value};
 
+mod buffer;
 mod bun_api;
 mod console;
 mod modules;
@@ -36,6 +37,7 @@ impl Runtime {
         install_timers(&ctx);
         install_module_loader(&ctx);
         web::install_web(&ctx);
+        buffer::install(&ctx);
         bun_api::install_bun(&ctx);
         install_global_this(&ctx);
         Self { ctx }

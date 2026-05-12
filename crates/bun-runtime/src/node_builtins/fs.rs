@@ -36,27 +36,54 @@ fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
         let bytes = fs::read(&path).map_err(io_err)?;
         let ctx = args.context();
 
-        // If encoding arg is a string ("utf8" / "utf-8" / "ascii"), decode.
-        // If it's undefined or an options object, return raw bytes wrapped
-        // in a {byteLength, toString()} stand-in (no Buffer yet).
-        let enc = args.get(1);
-        if enc.is_string() {
-            let s = enc.to_string().to_lowercase();
-            if s == "utf8" || s == "utf-8" || s == "ascii" || s == "latin1" {
-                let str_val = String::from_utf8_lossy(&bytes).into_owned();
-                return Ok(Value::new_string(ctx, &str_val));
+        // Encoding arg may be a string OR an options object `{ encoding }`.
+        let enc_arg = args.get(1);
+        let encoding: Option<String> = if enc_arg.is_string() {
+            Some(enc_arg.to_string())
+        } else if enc_arg.is_object() {
+            enc_arg
+                .to_object()
+                .ok()
+                .and_then(|o| o.get_property("encoding").ok())
+                .filter(|v| v.is_string())
+                .map(|v| v.to_string())
+        } else {
+            None
+        };
+
+        if let Some(enc) = encoding {
+            let s = enc.to_lowercase();
+            if s == "utf8" || s == "utf-8" {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                return Ok(Value::new_string(ctx, &text));
             }
+            if s == "ascii" || s == "latin1" || s == "binary" {
+                let text: String = bytes.iter().map(|&b| b as char).collect();
+                return Ok(Value::new_string(ctx, &text));
+            }
+            if s == "hex" {
+                let hex: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+                return Ok(Value::new_string(ctx, &hex));
+            }
+            // Unknown encoding — fall through to Buffer.
         }
-        // Default: return a string anyway (matches the common case). True
-        // Buffer support is Phase 3.
-        let str_val = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(Value::new_string(ctx, &str_val))
+
+        // No encoding (or unrecognized) → return a Buffer (zero-copy).
+        Ok(crate::buffer::buffer_from_bytes(ctx, bytes))
     });
 
     bind(ctx, obj, "writeFileSync", |args| {
         let path = args.get(0).to_string();
-        let data = args.get(1).to_string();
-        fs::write(&path, data.as_bytes()).map_err(io_err)?;
+        let v = args.get(1);
+        let bytes_owned;
+        let bytes: &[u8] = if let Some(slice) = v.typed_array_bytes() {
+            bytes_owned = slice.to_vec();
+            &bytes_owned
+        } else {
+            bytes_owned = v.to_string().into_bytes();
+            &bytes_owned
+        };
+        fs::write(&path, bytes).map_err(io_err)?;
         Ok(Value::new_undefined(args.context()))
     });
 

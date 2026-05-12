@@ -736,6 +736,78 @@ fn bun_serve_echo() {
 }
 
 #[test]
+fn buffer_class_basics() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            const a = Buffer.from("hello");
+            if (a.length !== 5) throw new Error("len");
+            if (a.toString() !== "hello") throw new Error("utf8");
+            if (a.toString("hex") !== "68656c6c6f") throw new Error("hex");
+            if (a.toString("base64") !== "aGVsbG8=") throw new Error("b64");
+            if (Buffer.from("48656c6c6f", "hex").toString() !== "Hello") throw new Error("from hex");
+            if (Buffer.from("aGVsbG8=", "base64").toString() !== "hello") throw new Error("from b64");
+            if (Buffer.alloc(3, 0x41).toString() !== "AAA") throw new Error("alloc");
+            if (Buffer.concat([Buffer.from("hi "), Buffer.from("bun")]).toString() !== "hi bun") throw new Error("concat");
+            if (!Buffer.isBuffer(a)) throw new Error("isBuffer");
+            console.log("ok");
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn fs_readfile_returns_buffer_no_encoding() {
+    let dir = tempdir();
+    std::fs::write(dir.join("b.bin"), [0x89u8, 0x50, 0x4e, 0x47]).unwrap();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import fs from "node:fs";
+        const b = fs.readFileSync("b.bin");
+        if (!Buffer.isBuffer(b)) throw new Error("not buffer");
+        if (b.length !== 4) throw new Error("len " + b.length);
+        if (b[0] !== 0x89 || b[1] !== 0x50 || b[2] !== 0x4e || b[3] !== 0x47)
+          throw new Error("content");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn writefile_accepts_buffer() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import fs from "node:fs";
+        fs.writeFileSync("w.bin", Buffer.from([1, 2, 3, 4, 5]));
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let bytes = std::fs::read(dir.join("w.bin")).unwrap();
+    assert_eq!(bytes, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
 fn node_fs_roundtrip() {
     let dir = tempdir();
     std::fs::write(

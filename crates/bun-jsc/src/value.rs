@@ -70,6 +70,97 @@ impl<'ctx> Value<'ctx> {
         Self { ctx, raw }
     }
 
+    /// Build a JS `Uint8Array` over the given byte buffer (zero-copy).
+    /// JSC takes ownership; the data is freed via a Rust trampoline when
+    /// the typed array is GC'd.
+    pub fn new_uint8_array(ctx: &'ctx Context, mut bytes: Vec<u8>) -> Self {
+        // Hand JSC a stable pointer + length. We need to keep the original
+        // capacity around so the deallocator can rebuild the Vec.
+        let len = bytes.len();
+        let cap = bytes.capacity();
+        let ptr = bytes.as_mut_ptr();
+        std::mem::forget(bytes);
+
+        // Stash (cap) in a Box so the deallocator can find it. We could pack
+        // it into the deallocator-context pointer directly (it's a usize on
+        // 64-bit), but a Box is clearer.
+        let cap_box: Box<usize> = Box::new(cap);
+        let cap_ctx = Box::into_raw(cap_box) as *mut std::os::raw::c_void;
+
+        unsafe extern "C" fn dealloc(bytes: *mut std::os::raw::c_void, ctx: *mut std::os::raw::c_void) {
+            let cap = *Box::from_raw(ctx as *mut usize);
+            // Reconstruct the Vec to drop it. `len` isn't preserved here;
+            // we only need the buffer reclaimed, so set len = cap.
+            // SAFETY: ptr was originally a Vec<u8> allocation with the
+            // recorded capacity.
+            let _ = Vec::from_raw_parts(bytes as *mut u8, cap, cap);
+        }
+
+        let mut exc: sys::JSValueRef = std::ptr::null();
+        let arr = unsafe {
+            sys::JSObjectMakeTypedArrayWithBytesNoCopy(
+                ctx.as_raw(),
+                sys::JSTypedArrayType::Uint8Array,
+                ptr as *mut _,
+                len,
+                Some(dealloc),
+                cap_ctx,
+                &mut exc,
+            )
+        };
+        if arr.is_null() {
+            // JSC failed — recover the Vec and let it drop normally.
+            unsafe {
+                let _ = Vec::from_raw_parts(ptr, len, cap);
+                let _ = Box::from_raw(cap_ctx as *mut usize);
+            }
+            // Fall back to an empty array.
+            let empty = unsafe {
+                sys::JSObjectMakeTypedArray(
+                    ctx.as_raw(),
+                    sys::JSTypedArrayType::Uint8Array,
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            return Self {
+                ctx,
+                raw: empty as sys::JSValueRef,
+            };
+        }
+        Self {
+            ctx,
+            raw: arr as sys::JSValueRef,
+        }
+    }
+
+    /// Inspect: if this value is a Uint8Array (or any other typed array view
+    /// over bytes), return a view of its backing storage. `None` otherwise.
+    /// The slice is valid for as long as JSC keeps the typed array alive;
+    /// since Value borrows the Context, that's the typical scope.
+    pub fn typed_array_bytes(&self) -> Option<&[u8]> {
+        unsafe {
+            let mut exc: sys::JSValueRef = std::ptr::null();
+            let ty = sys::JSValueGetTypedArrayType(self.ctx.as_raw(), self.raw, &mut exc);
+            if !exc.is_null() {
+                return None;
+            }
+            match ty {
+                sys::JSTypedArrayType::Uint8Array
+                | sys::JSTypedArrayType::Uint8ClampedArray
+                | sys::JSTypedArrayType::Int8Array => {}
+                _ => return None,
+            }
+            let obj = self.raw as sys::JSObjectRef;
+            let ptr = sys::JSObjectGetTypedArrayBytesPtr(self.ctx.as_raw(), obj, std::ptr::null_mut());
+            let len = sys::JSObjectGetTypedArrayLength(self.ctx.as_raw(), obj, std::ptr::null_mut());
+            if ptr.is_null() {
+                return None;
+            }
+            Some(std::slice::from_raw_parts(ptr as *const u8, len))
+        }
+    }
+
     pub fn kind(&self) -> ValueKind {
         let t = unsafe { sys::JSValueGetType(self.ctx.as_raw(), self.raw) };
         match t {

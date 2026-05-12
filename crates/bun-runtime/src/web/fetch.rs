@@ -127,6 +127,9 @@ pub fn install(ctx: &Context) {
         obj.set_property("url", &Value::new_string(ctx, &url)).unwrap();
         obj.set_property("body", &Value::new_string(ctx, &body_text))
             .unwrap();
+        // bytes view — zero-copy Uint8Array so binary responses survive intact.
+        obj.set_property("bytes", &Value::new_uint8_array(ctx, body))
+            .unwrap();
 
         // headers as plain object
         let h_v = ctx.eval("({})", Some("[fetch-headers]")).unwrap();

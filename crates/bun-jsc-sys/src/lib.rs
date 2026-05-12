@@ -44,12 +44,36 @@ pub enum JSType {
     Symbol = 6,
 }
 
+/// Discriminants match the order of `JSTypedArrayType` in JSValueRef.h
+/// (NOT the documented order; the comment list uses a different ordering than
+/// the actual enum body, which is the source of truth).
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum JSTypedArrayType {
+    Int8Array = 0,
+    Int16Array = 1,
+    Int32Array = 2,
+    Uint8Array = 3,
+    Uint8ClampedArray = 4,
+    Uint16Array = 5,
+    Uint32Array = 6,
+    Float32Array = 7,
+    Float64Array = 8,
+    ArrayBuffer = 9,
+    None = 10,
+    BigInt64Array = 11,
+    BigUint64Array = 12,
+}
+
 /// Property attribute bitset (matches JSObjectRef.h).
 pub type JSPropertyAttributes = c_uint;
 pub const kJSPropertyAttributeNone: JSPropertyAttributes = 0;
 pub const kJSPropertyAttributeReadOnly: JSPropertyAttributes = 1 << 1;
 pub const kJSPropertyAttributeDontEnum: JSPropertyAttributes = 1 << 2;
 pub const kJSPropertyAttributeDontDelete: JSPropertyAttributes = 1 << 3;
+
+pub type JSTypedArrayBytesDeallocator =
+    unsafe extern "C" fn(bytes: *mut c_void, deallocatorContext: *mut c_void);
 
 pub type JSObjectCallAsFunctionCallback = unsafe extern "C" fn(
     ctx: JSContextRef,
@@ -204,6 +228,51 @@ extern "C" {
     ) -> bool;
 
     pub fn JSGarbageCollect(ctx: JSContextRef);
+
+    // --- Typed arrays / ArrayBuffer ---
+    pub fn JSObjectMakeTypedArray(
+        ctx: JSContextRef,
+        arrayType: JSTypedArrayType,
+        length: usize,
+        exception: *mut JSValueRef,
+    ) -> JSObjectRef;
+    pub fn JSObjectMakeTypedArrayWithBytesNoCopy(
+        ctx: JSContextRef,
+        arrayType: JSTypedArrayType,
+        bytes: *mut c_void,
+        byteLength: usize,
+        bytesDeallocator: Option<JSTypedArrayBytesDeallocator>,
+        deallocatorContext: *mut c_void,
+        exception: *mut JSValueRef,
+    ) -> JSObjectRef;
+    pub fn JSObjectGetTypedArrayBytesPtr(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        exception: *mut JSValueRef,
+    ) -> *mut c_void;
+    pub fn JSObjectGetTypedArrayLength(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        exception: *mut JSValueRef,
+    ) -> usize;
+    pub fn JSObjectGetTypedArrayByteLength(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        exception: *mut JSValueRef,
+    ) -> usize;
+    pub fn JSObjectMakeArrayBufferWithBytesNoCopy(
+        ctx: JSContextRef,
+        bytes: *mut c_void,
+        byteLength: usize,
+        bytesDeallocator: Option<JSTypedArrayBytesDeallocator>,
+        deallocatorContext: *mut c_void,
+        exception: *mut JSValueRef,
+    ) -> JSObjectRef;
+    pub fn JSValueGetTypedArrayType(
+        ctx: JSContextRef,
+        value: JSValueRef,
+        exception: *mut JSValueRef,
+    ) -> JSTypedArrayType;
 
     // --- Strings ---
     pub fn JSStringCreateWithUTF8CString(string: *const c_char) -> JSStringRef;

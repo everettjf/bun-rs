@@ -126,9 +126,12 @@
   g.Headers = Headers;
 
   // ─────────────────────────── Body mixin ───────────────────────────
-  function makeBody(bodyText) {
+  // `bodyText` is the textified body; `bodyBytes` (optional) is a
+  // Uint8Array view over the raw bytes (used by fetch for binary).
+  function makeBody(bodyText, bodyBytes) {
     return {
-      _body: bodyText == null ? "" : String(bodyText),
+      _body: bodyText == null ? "" : (typeof bodyText === "string" ? bodyText : String(bodyText)),
+      _bodyBytes: bodyBytes || null,
       _bodyUsed: false,
       get bodyUsed() { return this._bodyUsed; },
       text() {
@@ -142,12 +145,18 @@
         try { return Promise.resolve(JSON.parse(this._body)); }
         catch (e) { return Promise.reject(e); }
       },
+      bytes() {
+        if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
+        this._bodyUsed = true;
+        if (this._bodyBytes) return Promise.resolve(this._bodyBytes);
+        return Promise.resolve(new __bun_te().encode(this._body));
+      },
       arrayBuffer() {
         if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
         this._bodyUsed = true;
-        const enc = new __bun_te();
-        const u8 = enc.encode(this._body);
-        return Promise.resolve(u8.buffer);
+        const u8 = this._bodyBytes || new __bun_te().encode(this._body);
+        // Slice into a fresh ArrayBuffer so callers can mutate freely.
+        return Promise.resolve(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
       },
     };
   }
@@ -214,7 +223,8 @@
       this.url = typeof input === "string" ? input : input.url;
       this.method = (init.method || "GET").toUpperCase();
       this.headers = new Headers(init.headers || {});
-      Object.assign(this, makeBody(init.body));
+      const bytes = init.body instanceof Uint8Array ? init.body : null;
+      Object.assign(this, makeBody(init.body, bytes));
     }
   }
   g.Request = Request;
@@ -223,7 +233,8 @@
   class Response {
     constructor(body, init) {
       init = init || {};
-      Object.assign(this, makeBody(body));
+      const bytes = body instanceof Uint8Array ? body : init._bytes || null;
+      Object.assign(this, makeBody(body, bytes));
       this.status = init.status != null ? init.status : 200;
       this.statusText = init.statusText || "";
       this.headers = new Headers(init.headers || {});
@@ -265,6 +276,7 @@
       status: raw.status,
       headers: raw.headers,
       url: raw.url,
+      _bytes: raw.bytes,
     });
     return Promise.resolve(r);
   };

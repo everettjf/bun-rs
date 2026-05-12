@@ -58,34 +58,23 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let p_bytes = path.clone();
         bind(ctx, &obj, "bytes", move |args| {
             let bytes = fs::read(&p_bytes).map_err(|e| e.to_string())?;
-            let ctx = args.context();
-            // Build Uint8Array via JS — JSC has Uint8Array as a builtin.
-            // We feed bytes through an array literal; this is OK for MVP
-            // sizes. True zero-copy would use JSObjectMakeTypedArrayWithBytesNoCopy.
-            let arr_lit = format!(
-                "new Uint8Array([{}])",
-                bytes
-                    .iter()
-                    .map(|b| b.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            Ok(ctx.eval(&arr_lit, Some("[Bun.file.bytes]")).unwrap())
+            // Zero-copy Uint8Array.
+            Ok(Value::new_uint8_array(args.context(), bytes))
         });
 
         let p_ab = path.clone();
         bind(ctx, &obj, "arrayBuffer", move |args| {
             let bytes = fs::read(&p_ab).map_err(|e| e.to_string())?;
-            let ctx = args.context();
-            let arr_lit = format!(
-                "new Uint8Array([{}]).buffer",
-                bytes
-                    .iter()
-                    .map(|b| b.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            Ok(ctx.eval(&arr_lit, Some("[Bun.file.ab]")).unwrap())
+            // Build the typed array first, then access its `.buffer` so we
+            // hand back an actual ArrayBuffer.
+            let u8 = Value::new_uint8_array(args.context(), bytes);
+            let getter = args
+                .context()
+                .eval("(u) => u.buffer", Some("[arrayBuffer]"))
+                .unwrap()
+                .to_object()
+                .map_err(|e| e.to_string())?;
+            getter.call(None, &[u8]).map_err(|e| e.to_string())
         });
 
         let p_exists = path.clone();
@@ -101,9 +90,17 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 
     bind(ctx, bun, "write", |args| {
         let dest = args.get(0).to_string();
-        let data = args.get(1).to_string();
-        fs::write(&dest, data.as_bytes()).map_err(|e| e.to_string())?;
-        Ok(Value::new_number(args.context(), data.len() as f64))
+        let v = args.get(1);
+        let bytes_owned;
+        let bytes: &[u8] = if let Some(slice) = v.typed_array_bytes() {
+            bytes_owned = slice.to_vec();
+            &bytes_owned
+        } else {
+            bytes_owned = v.to_string().into_bytes();
+            &bytes_owned
+        };
+        fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+        Ok(Value::new_number(args.context(), bytes.len() as f64))
     });
 }
 
