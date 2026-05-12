@@ -15,3 +15,4 @@ thiserror = { workspace = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 url = "2"
 serde_json = "1"
+tiny_http = "0.12"

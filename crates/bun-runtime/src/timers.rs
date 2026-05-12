@@ -159,9 +159,18 @@ fn has_pending_timers() -> bool {
     TIMERS.with(|t| !t.borrow().is_empty())
 }
 
-/// Drive timer firings until the registry is empty.
+/// Drive timer firings until the registry is empty AND no servers are
+/// listening. Servers (Bun.serve) keep the loop running indefinitely.
 pub fn run_event_loop(ctx: &Context) {
-    while run_one_tick(ctx) {}
+    loop {
+        let timer_did_work = run_one_tick(ctx);
+        let server_did_work =
+            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(50));
+        let servers_active = crate::bun_api::serve::any_active();
+        if !timer_did_work && !server_did_work && !servers_active {
+            return;
+        }
+    }
 }
 
 /// Fire the next due timer (sleeping until its deadline if needed). Returns

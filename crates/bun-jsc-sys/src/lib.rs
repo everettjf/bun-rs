@@ -332,6 +332,15 @@ extern "C" {
         exception: *mut JSValueRef,
     ) -> JSValueRef;
 
+    pub fn JSObjectIsConstructor(ctx: JSContextRef, object: JSObjectRef) -> bool;
+    pub fn JSObjectCallAsConstructor(
+        ctx: JSContextRef,
+        object: JSObjectRef,
+        argumentCount: usize,
+        arguments: *const JSValueRef,
+        exception: *mut JSValueRef,
+    ) -> JSObjectRef;
+
     pub fn JSObjectGetPrivate(object: JSObjectRef) -> *mut c_void;
     pub fn JSObjectSetPrivate(object: JSObjectRef, data: *mut c_void) -> bool;
 

@@ -629,6 +629,113 @@ fn web_headers_and_response_json() {
 }
 
 #[test]
+fn bun_file_roundtrip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import path from "node:path";
+        const p = path.join(process.cwd(), "f.json");
+        await Bun.write(p, JSON.stringify({n:7}));
+        const f = Bun.file(p);
+        if (f.size !== 7) throw new Error("size " + f.size);
+        const j = await f.json();
+        if (j.n !== 7) throw new Error("n " + j.n);
+        const t = await f.text();
+        if (t !== '{"n":7}') throw new Error("text " + t);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn bun_serve_echo() {
+    use std::io::{Read, Write};
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        const server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                const u = new URL(req.url);
+                if (u.pathname === "/json") return Response.json({path: u.pathname});
+                return new Response("hi " + u.pathname, { headers: { "x-bunrs": "ok" } });
+            }
+        });
+        console.log("PORT:" + server.port);
+        "#,
+    )
+    .unwrap();
+
+    let mut child = bun_rs()
+        .arg(dir.join("m.ts"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Read child stdout until "PORT:<n>" appears.
+    let mut stdout = child.stdout.take().unwrap();
+    let mut buf = [0u8; 256];
+    let mut acc = Vec::new();
+    let start = std::time::Instant::now();
+    let port = loop {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = child.kill();
+            panic!("server didn't print port in time");
+        }
+        match stdout.read(&mut buf) {
+            Ok(0) => break None,
+            Ok(n) => acc.extend_from_slice(&buf[..n]),
+            Err(_) => {}
+        }
+        if let Some(p) = std::str::from_utf8(&acc)
+            .ok()
+            .and_then(|s| s.lines().find_map(|l| l.strip_prefix("PORT:")))
+            .and_then(|s| s.trim().parse::<u16>().ok())
+        {
+            break Some(p);
+        }
+    };
+    let port = port.expect("got a port");
+
+    // Do an HTTP request against the server with a raw TCP stream so we
+    // don't need a client crate inside the test.
+    let mut stream =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect to server");
+    stream
+        .write_all(b"GET /world HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).unwrap();
+    assert!(resp.contains("200 OK"), "resp: {resp}");
+    assert!(resp.contains("x-bunrs: ok"), "resp: {resp}");
+    assert!(resp.contains("hi /world"), "resp: {resp}");
+
+    // JSON path.
+    let mut stream =
+        std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect again");
+    stream
+        .write_all(b"GET /json HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).unwrap();
+    assert!(resp.contains("\"path\":\"/json\""), "resp: {resp}");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn node_fs_roundtrip() {
     let dir = tempdir();
     std::fs::write(

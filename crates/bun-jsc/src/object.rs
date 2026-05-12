@@ -71,6 +71,29 @@ impl<'ctx> Object<'ctx> {
         unsafe { sys::JSObjectIsFunction(self.ctx.as_raw(), self.raw) }
     }
 
+    pub fn is_constructor(&self) -> bool {
+        unsafe { sys::JSObjectIsConstructor(self.ctx.as_raw(), self.raw) }
+    }
+
+    /// Call as `new self(...args)`. Returns the resulting object value.
+    pub fn construct(&self, args: &[Value<'_>]) -> Result<Value<'ctx>, JsException> {
+        let raw_args: Vec<sys::JSValueRef> = args.iter().map(|v| v.as_raw()).collect();
+        let mut exc: sys::JSValueRef = ptr::null();
+        let raw = unsafe {
+            sys::JSObjectCallAsConstructor(
+                self.ctx.as_raw(),
+                self.raw,
+                raw_args.len(),
+                raw_args.as_ptr(),
+                &mut exc,
+            )
+        };
+        if !exc.is_null() {
+            return Err(JsException::adopt(self.ctx, exc));
+        }
+        Ok(unsafe { Value::from_raw(self.ctx, raw as sys::JSValueRef) })
+    }
+
     /// Call `self` as a function. `this` defaults to `undefined`.
     pub fn call(
         &self,
