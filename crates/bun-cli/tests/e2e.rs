@@ -815,6 +815,57 @@ fn bun_test_runner_reports_failure() {
 }
 
 #[test]
+fn bundle_emits_single_file_that_runs() {
+    let dir = tempdir();
+    std::fs::write(dir.join("greet.ts"), "export function greet(w:string){return \"hi \"+w;}").unwrap();
+    std::fs::write(dir.join("life.ts"), "export default 42;").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import { greet } from './greet';\nimport m from './life';\nconsole.log(greet('bun'), m);",
+    )
+    .unwrap();
+
+    let bundle_path = dir.join("out.js");
+    let out = bun_rs()
+        .arg("build")
+        .arg(dir.join("main.ts"))
+        .arg("--outfile")
+        .arg(&bundle_path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "build stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(bundle_path.exists());
+
+    let run = bun_rs().arg(&bundle_path).output().unwrap();
+    assert!(run.status.success(), "run stderr: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "hi bun 42");
+}
+
+#[test]
+fn bundle_handles_node_external() {
+    // Bundler keeps node:* as externals; the bundled output should still
+    // run under bun-rs (since we provide the node:* builtins).
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import path from 'node:path'; console.log(path.join('a','b'));",
+    )
+    .unwrap();
+    let bundle_path = dir.join("out.js");
+    let build = bun_rs()
+        .arg("build")
+        .arg(dir.join("main.ts"))
+        .arg("--outfile")
+        .arg(&bundle_path)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "build stderr: {}", String::from_utf8_lossy(&build.stderr));
+    let run = bun_rs().arg(&bundle_path).output().unwrap();
+    assert!(run.status.success(), "run stderr: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "a/b");
+}
+
+#[test]
 fn readline_callback_form() {
     use std::io::Write;
     let dir = tempdir();

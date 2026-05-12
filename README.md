@@ -2,8 +2,8 @@
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** 0.2.0 — runs TypeScript + ESM, streams + concurrent HTTP,
-sourcemap-aware error stacks. See:
+**Status:** 0.3.0 — TypeScript + ESM runtime + test runner + bundler
++ streams + concurrent HTTP + readline + WebSocket. See:
 
 - [`docs/tutorial.md`](docs/tutorial.md) — 30-minute walk-through
 - [`docs/guide.md`](docs/guide.md) — full reference: what works, what doesn't
@@ -21,6 +21,8 @@ cargo build --release
 ./target/release/bun-rs -p "40 + 2"        # 42
 ./target/release/bun-rs run app.ts         # multi-file TS + ESM
 ./target/release/bun-rs run server.ts      # Bun.serve, fetch, ...
+./target/release/bun-rs test               # runs *.test.ts files
+./target/release/bun-rs build app.ts -o bundle.js   # single-file bundle
 ```
 
 ## What works
@@ -44,9 +46,10 @@ cargo build --release
 - `process.{argv,env,cwd,exit,platform,arch,pid,versions}`
 - `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval`
 - `queueMicrotask`
-- **`fetch`** — async via tokio + reqwest (rustls); does not block the JS thread
+- **`fetch`** — async via tokio + reqwest (rustls); does not block the JS thread; honors `AbortSignal`
 - **`Buffer`** (Node-compatible, extends Uint8Array, zero-copy from Rust)
 - **`ReadableStream` / `WritableStream` / `TransformStream`** + `pipeTo` / `pipeThrough` / `tee` / `ReadableStream.from`
+- **`WebSocket`** (client, text + binary, custom close codes)
 - **`AbortController` / `AbortSignal`** (including `.timeout` / `.any`)
 - `URL` / `URLSearchParams` (parsing via Rust `url`)
 - `Headers` / `Request` / `Response` (`Response.body` is a real stream)
@@ -69,6 +72,7 @@ cargo build --release
 | `node:querystring` | parse / stringify / escape / unescape |
 | `node:url` | URL, URLSearchParams, fileURLToPath, pathToFileURL |
 | `node:stream` | Readable / Writable / Duplex / PassThrough, pipeline / finished, Web Streams interop |
+| `node:readline` | createInterface, question/on('line')/on('close'), readline.promises |
 
 ### `Bun.*` namespace
 
@@ -89,11 +93,10 @@ See [`docs/build.md`](docs/build.md).
 
 ## What's still missing
 
-- **HTTPS** in Bun.serve, **HTTP/2**, **WebSocket**
-- **`fetch` honoring `AbortSignal`** (the signal works for user code, just not threaded into reqwest yet)
+- **HTTPS** in Bun.serve, **HTTP/2** (WebSocket *server* TBD)
 - **Live ESM bindings** (`import` is currently a value snapshot at load time)
 - **Worker / Cluster**
-- **bundler** / **package manager** (`bun install`, `bun build`, `bun test`)
+- **`bun install`** (no package manager yet)
 - **shell / SQL / bake / FFI**
 
 ## Layout
@@ -102,11 +105,13 @@ See [`docs/build.md`](docs/build.md).
 crates/
   bun-cli/         entrypoint binary
   bun-runtime/     event loop + globals (console / process / timers /
-                                          modules / web / Bun.* / node:*)
+                                          modules / web / Bun.* / node:* /
+                                          test runner)
   bun-jsc-sys/     raw JSC C API FFI
   bun-jsc/         safe RAII wrapper
   bun-transpile/   oxc-powered TS/JSX → JS
-  bun-loader/      path resolver + ESM → IIFE rewriter
+  bun-loader/      path resolver + ESM → IIFE rewriter (+ line-map for stacks)
+  bun-bundler/     single-file bundler (wraps bun-loader's graph walk)
 ```
 
 ## Build & test

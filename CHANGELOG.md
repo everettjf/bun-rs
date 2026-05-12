@@ -3,6 +3,42 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [0.3.0] – 2026-05-12
+
+The theme: workflow — test runner, bundler, REPL polish.
+
+### Added
+- **`bun-rs test`** — Jest-compatible runner with `describe` / `test` /
+  `it` / `expect` (16+ matchers, `.not`, async `.resolves` / `.rejects`),
+  `beforeAll` / `afterAll` / `beforeEach` / `afterEach`. Auto-discovers
+  `*.test.{ts,tsx,js,jsx}` / `*.spec.{ts,tsx,js}` files.
+- **`bun-rs build <entry> [--outfile path]`** — single-file bundler.
+  Walks the import graph via the existing loader, emits all reachable
+  modules as numbered factories in one self-contained JS file.
+  `node:*` imports stay as host-resolved externals. ~1.7KB for a
+  3-module hello-world.
+- **`WebSocket`** — client, text + binary frames, `addEventListener` +
+  `on*`, custom close codes / reasons. tokio_tungstenite + rustls.
+- **`fetch` honors `AbortSignal`** — `init.signal` wires into the
+  tokio task via a cancel channel; aborting collapses the request
+  immediately instead of waiting for the full response.
+- **`node:readline`** — `createInterface`, `question(query, cb)`,
+  `on('line')` / `on('close')`, `readline.promises.createInterface`
+  with `await iface.question(query)`.
+
+### Fixed
+- **Event-loop bug**: `run_one_tick` used to `std::thread::sleep` until
+  the next timer's deadline, which starved async-runtime task delivery
+  (WS messages, fetch completions, fs.promises) by up to seconds.
+  Replaced with a "fire only due timers; caller naps in short
+  chunks" design. All existing tests stayed green; readline /
+  WebSocket tests would have surfaced this on every run.
+
+### Known still-missing
+- Live ESM bindings (deferred to 0.4 — needs symbol-level rewriter).
+- HTTPS server, HTTP/2 (deferred to 0.5).
+- `bun install` (deferred to 0.4).
+
 ## [0.2.0] – 2026-05-12
 
 The theme: streams, concurrency, better error reporting.

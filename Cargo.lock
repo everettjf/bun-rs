@@ -91,8 +91,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bun-bundler"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bun-loader",
+ "thiserror",
+]
+
+[[package]]
 name = "bun-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bun-runtime",
@@ -100,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "bun-jsc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bun-jsc-sys",
  "thiserror",
@@ -108,14 +117,14 @@ dependencies = [
 
 [[package]]
 name = "bun-jsc-sys"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pkg-config",
 ]
 
 [[package]]
 name = "bun-loader"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bun-transpile",
@@ -131,9 +140,10 @@ dependencies = [
 
 [[package]]
 name = "bun-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
+ "bun-bundler",
  "bun-jsc",
  "bun-jsc-sys",
  "bun-loader",
@@ -163,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "bun-transpile"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "oxc",

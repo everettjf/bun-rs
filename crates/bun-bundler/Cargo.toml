@@ -1,0 +1,11 @@
+[package]
+name = "bun-bundler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Single-file bundler that wraps bun-loader's pipeline."
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+bun-loader = { workspace = true }

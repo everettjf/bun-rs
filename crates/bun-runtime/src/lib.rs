@@ -167,6 +167,36 @@ fn run() -> Result<(), RuntimeError> {
                 Err(exc) => Err(RuntimeError::Throw(format_exception(&exc))),
             }
         }
+        "build" => {
+            // bun-rs build <entry> [--outfile <path>]
+            let entry = args.get(1).ok_or(RuntimeError::Usage)?.clone();
+            let mut outfile: Option<String> = None;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--outfile" | "-o" => {
+                        i += 1;
+                        outfile = args.get(i).cloned();
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let entry_path = Path::new(&entry);
+            let bundle = bun_bundler::bundle(entry_path)
+                .map_err(|e| RuntimeError::Throw(format!("bundle failed: {e}")))?;
+            match outfile {
+                Some(p) => {
+                    std::fs::write(&p, &bundle.code)
+                        .map_err(|e| RuntimeError::ReadFile(PathBuf::from(&p), e))?;
+                    eprintln!("wrote {} ({} modules, {} bytes)", p, bundle.modules.len(), bundle.code.len());
+                }
+                None => {
+                    println!("{}", bundle.code);
+                }
+            }
+            return Ok(());
+        }
         "test" => {
             let paths: Vec<String> = args.drain(1..).collect();
             let code = test_runner::run_tests(paths);
