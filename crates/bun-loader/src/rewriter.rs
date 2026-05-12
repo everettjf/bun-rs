@@ -37,6 +37,9 @@ pub struct ModuleAnalysis {
     pub imports: Vec<String>,
     /// The rewritten module body (no ESM syntax left).
     pub code: String,
+    /// For each 1-indexed line of `code`, the originating line in the
+    /// input source (1-indexed; 0 = synthetic).
+    pub line_map: Vec<u32>,
 }
 
 /// Rewrite a JS source string. Caller passes JS (post-TS-transpile).
@@ -155,11 +158,11 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
     }
 
     let program = parsed.program;
-    let mut out = String::with_capacity(source.len() + 256);
+    let byte_to_line = build_byte_to_line(source);
+    let mut emit = Emit::new(source.len() + 256);
     let mut imports = Vec::<String>::new();
     let mut next_local: u32 = 0;
     let mut alloc_local = |imports: &mut Vec<String>, src: &str| -> String {
-        // Only push to imports once per distinct specifier.
         if !imports.iter().any(|s| s == src) {
             imports.push(src.to_string());
         }
@@ -171,30 +174,27 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
     for stmt in &program.body {
         match stmt {
             Statement::ImportDeclaration(d) => {
-                // `import type ... from` should have been stripped by bun-transpile
-                // (it runs first). Skip defensively.
                 if d.import_kind.is_type() {
                     continue;
                 }
                 let spec_text = &d.source.value;
                 let local = alloc_local(&mut imports, spec_text);
-                writeln_(&mut out, &format!(
+                emit.synth(&format!(
                     "const {local} = await __bun_require({}, __filename);",
                     js_string(spec_text)
                 ));
 
                 if let Some(specs) = &d.specifiers {
-                    let mut parts: Vec<String> = Vec::new();
                     for s in specs {
                         match s {
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(ds) => {
-                                parts.push(format!(
+                                emit.synth(&format!(
                                     "const {} = {local}.default;",
                                     binding_name(&ds.local)
                                 ));
                             }
                             ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
-                                parts.push(format!(
+                                emit.synth(&format!(
                                     "const {} = {local};",
                                     binding_name(&ns.local)
                                 ));
@@ -203,11 +203,11 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                                 let imported = export_name_str(&is.imported);
                                 let local_name = binding_name(&is.local);
                                 if is_ident(&imported) {
-                                    parts.push(format!(
+                                    emit.synth(&format!(
                                         "const {local_name} = {local}.{imported};"
                                     ));
                                 } else {
-                                    parts.push(format!(
+                                    emit.synth(&format!(
                                         "const {local_name} = {local}[{}];",
                                         js_string(&imported)
                                     ));
@@ -215,42 +215,30 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                             }
                         }
                     }
-                    for p in parts {
-                        writeln_(&mut out, &p);
-                    }
                 }
-                // `import "./y"` → just the require call, already emitted.
             }
 
             Statement::ExportAllDeclaration(d) => {
                 let spec_text = &d.source.value;
                 let local = alloc_local(&mut imports, spec_text);
-                writeln_(
-                    &mut out,
-                    &format!(
-                        "const {local} = await __bun_require({}, __filename);",
-                        js_string(spec_text)
-                    ),
-                );
+                emit.synth(&format!(
+                    "const {local} = await __bun_require({}, __filename);",
+                    js_string(spec_text)
+                ));
                 if let Some(exported) = &d.exported {
-                    // `export * as ns from "./y"` → __exports.ns = local;
                     let name = export_name_str(exported);
                     if is_ident(&name) {
-                        writeln_(&mut out, &format!("__exports.{name} = {local};"));
+                        emit.synth(&format!("__exports.{name} = {local};"));
                     } else {
-                        writeln_(
-                            &mut out,
-                            &format!("__exports[{}] = {local};", js_string(&name)),
-                        );
+                        emit.synth(&format!(
+                            "__exports[{}] = {local};",
+                            js_string(&name)
+                        ));
                     }
                 } else {
-                    // `export * from "./y"` → re-export every key
-                    writeln_(
-                        &mut out,
-                        &format!(
-                            "for (const __k in {local}) {{ if (__k !== 'default') __exports[__k] = {local}[__k]; }}"
-                        ),
-                    );
+                    emit.synth(&format!(
+                        "for (const __k in {local}) {{ if (__k !== 'default') __exports[__k] = {local}[__k]; }}"
+                    ));
                 }
             }
 
@@ -258,33 +246,28 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                 if d.export_kind.is_type() {
                     continue;
                 }
-                // Three shapes:
-                //  (a) `export const x = 1;` / `export function f(){}` / `export class C{}`
-                //  (b) `export { a, b as c };`
-                //  (c) `export { a } from "./y";`
                 if let Some(decl) = &d.declaration {
-                    // Shape (a): re-emit the inner declaration, then add hookups.
-                    let (inner_text, names) = emit_inner_decl(source, decl);
-                    out.push_str(&inner_text);
-                    if !inner_text.ends_with('\n') {
-                        out.push('\n');
-                    }
+                    // Shape (a): re-emit the inner declaration FROM SOURCE
+                    // (preserves the user's line numbers), then synthetic
+                    // hookups.
+                    use oxc_span::GetSpan;
+                    let sp = decl.span();
+                    let start_line = byte_to_line[sp.start as usize];
+                    let text = &source[sp.start as usize..sp.end as usize];
+                    let names = decl_names(decl);
+                    emit.slice(text, start_line);
                     for n in names {
                         if is_ident(&n) {
-                            writeln_(&mut out, &format!("__exports.{n} = {n};"));
+                            emit.synth(&format!("__exports.{n} = {n};"));
                         }
                     }
                 } else if let Some(src) = &d.source {
-                    // Shape (c): re-export from another module.
                     let spec_text = &src.value;
                     let local = alloc_local(&mut imports, spec_text);
-                    writeln_(
-                        &mut out,
-                        &format!(
-                            "const {local} = await __bun_require({}, __filename);",
-                            js_string(spec_text)
-                        ),
-                    );
+                    emit.synth(&format!(
+                        "const {local} = await __bun_require({}, __filename);",
+                        js_string(spec_text)
+                    ));
                     for s in &d.specifiers {
                         let local_name = export_name_str(&s.local);
                         let exported_name = export_name_str(&s.exported);
@@ -294,22 +277,17 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                             format!("{local}[{}]", js_string(&local_name))
                         };
                         if is_ident(&exported_name) {
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.{exported_name} = {access};"),
-                            );
+                            emit.synth(&format!(
+                                "__exports.{exported_name} = {access};"
+                            ));
                         } else {
-                            writeln_(
-                                &mut out,
-                                &format!(
-                                    "__exports[{}] = {access};",
-                                    js_string(&exported_name)
-                                ),
-                            );
+                            emit.synth(&format!(
+                                "__exports[{}] = {access};",
+                                js_string(&exported_name)
+                            ));
                         }
                     }
                 } else {
-                    // Shape (b): re-export local bindings.
                     for s in &d.specifiers {
                         let local_name = export_name_str(&s.local);
                         let exported_name = export_name_str(&s.exported);
@@ -320,86 +298,160 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                             });
                         }
                         if is_ident(&exported_name) {
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.{exported_name} = {local_name};"),
-                            );
+                            emit.synth(&format!(
+                                "__exports.{exported_name} = {local_name};"
+                            ));
                         } else {
-                            writeln_(
-                                &mut out,
-                                &format!(
-                                    "__exports[{}] = {local_name};",
-                                    js_string(&exported_name)
-                                ),
-                            );
+                            emit.synth(&format!(
+                                "__exports[{}] = {local_name};",
+                                js_string(&exported_name)
+                            ));
                         }
                     }
                 }
             }
 
             Statement::ExportDefaultDeclaration(d) => {
+                use oxc_span::GetSpan;
                 match &d.declaration {
                     ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
                         let span = f.span;
                         let body = &source[span.start as usize..span.end as usize];
+                        let start_line = byte_to_line[span.start as usize];
                         if let Some(id) = &f.id {
-                            // Named: emit function then assign.
-                            out.push_str(body);
-                            out.push('\n');
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.default = {};", id.name),
-                            );
+                            emit.slice(body, start_line);
+                            emit.synth(&format!("__exports.default = {};", id.name));
                         } else {
-                            // Anonymous: wrap as expression.
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.default = ({});", body),
-                            );
+                            // Wrap anon fn as expression — single synthetic line.
+                            emit.synth(&format!("__exports.default = ({});", body));
                         }
                     }
                     ExportDefaultDeclarationKind::ClassDeclaration(c) => {
                         let span = c.span;
                         let body = &source[span.start as usize..span.end as usize];
+                        let start_line = byte_to_line[span.start as usize];
                         if let Some(id) = &c.id {
-                            out.push_str(body);
-                            out.push('\n');
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.default = {};", id.name),
-                            );
+                            emit.slice(body, start_line);
+                            emit.synth(&format!("__exports.default = {};", id.name));
                         } else {
-                            writeln_(
-                                &mut out,
-                                &format!("__exports.default = ({});", body),
-                            );
+                            emit.synth(&format!("__exports.default = ({});", body));
                         }
                     }
-                    ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => {
-                        // Types are erased by bun-transpile; ignore defensively.
-                    }
+                    ExportDefaultDeclarationKind::TSInterfaceDeclaration(_) => {}
                     expr => {
-                        use oxc_span::GetSpan;
                         let span = expr.span();
                         let body = &source[span.start as usize..span.end as usize];
-                        writeln_(
-                            &mut out,
-                            &format!("__exports.default = ({});", body),
-                        );
+                        emit.synth(&format!("__exports.default = ({});", body));
                     }
                 }
             }
 
-            // Anything else: keep source as-is.
+            // Anything else: keep source as-is, preserving its lines.
             other => {
                 let span = stmt_span(other);
-                out.push_str(&source[span.0 as usize..span.1 as usize]);
-                out.push('\n');
+                let start_line = byte_to_line[span.0 as usize];
+                emit.slice(
+                    &source[span.0 as usize..span.1 as usize],
+                    start_line,
+                );
             }
         }
     }
 
-    Ok(ModuleAnalysis { imports, code: out })
+    let (code, line_map) = emit.finish();
+    Ok(ModuleAnalysis { imports, code, line_map })
+}
+
+/// Extract the names a declaration binds. Used for shape (a) of
+/// `export <decl>` so we can wire up `__exports.X = X` afterwards.
+fn decl_names<'a>(decl: &oxc_ast::ast::Declaration<'a>) -> Vec<String> {
+    use oxc_ast::ast::*;
+    let mut out = Vec::new();
+    match decl {
+        Declaration::VariableDeclaration(vd) => {
+            for d in &vd.declarations {
+                gather_binding_names(&d.id, &mut out);
+            }
+        }
+        Declaration::FunctionDeclaration(f) => {
+            if let Some(id) = &f.id {
+                out.push(id.name.to_string());
+            }
+        }
+        Declaration::ClassDeclaration(c) => {
+            if let Some(id) = &c.id {
+                out.push(id.name.to_string());
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Emitter that tracks per-output-line correspondence to input lines.
+struct Emit {
+    out: String,
+    /// 1-indexed input line per emitted output line.
+    line_map: Vec<u32>,
+}
+
+impl Emit {
+    fn new(cap: usize) -> Self {
+        Self {
+            out: String::with_capacity(cap),
+            line_map: Vec::new(),
+        }
+    }
+
+    /// Emit a synthetic chunk. Each output line it produces maps to "no
+    /// input line" (0).
+    fn synth(&mut self, text: &str) {
+        self.write_chunk(text, 0, false);
+    }
+
+    /// Emit text taken verbatim from the input. The first output line
+    /// corresponds to `start_input_line`; subsequent lines (split by `\n`
+    /// in `text`) map to `start_input_line + 1`, +2, ...
+    fn slice(&mut self, text: &str, start_input_line: u32) {
+        self.write_chunk(text, start_input_line, true);
+    }
+
+    fn write_chunk(&mut self, text: &str, base_line: u32, advance: bool) {
+        let mut cur = base_line;
+        for c in text.chars() {
+            self.out.push(c);
+            if c == '\n' {
+                self.line_map.push(cur);
+                if advance && cur != 0 {
+                    cur += 1;
+                }
+            }
+        }
+        // Ensure the chunk ends on a newline so subsequent emit calls start
+        // their own output line. This also keeps the line_map aligned.
+        if !self.out.ends_with('\n') {
+            self.out.push('\n');
+            self.line_map.push(cur);
+        }
+    }
+
+    fn finish(self) -> (String, Vec<u32>) {
+        (self.out, self.line_map)
+    }
+}
+
+/// `byte_to_line[i]` is the 1-indexed line number of byte `i` in `source`.
+fn build_byte_to_line(source: &str) -> Vec<u32> {
+    let mut out = Vec::with_capacity(source.len() + 1);
+    let mut line: u32 = 1;
+    for b in source.bytes() {
+        out.push(line);
+        if b == b'\n' {
+            line += 1;
+        }
+    }
+    out.push(line);
+    out
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -451,41 +503,6 @@ fn js_string(s: &str) -> String {
     out
 }
 
-fn writeln_(out: &mut String, s: &str) {
-    out.push_str(s);
-    out.push('\n');
-}
-
-// ── Inner decl emission (for `export const|fn|class`) ───────────────────────
-
-fn emit_inner_decl<'a>(source: &str, decl: &Declaration<'a>) -> (String, Vec<String>) {
-    use oxc_ast::ast::*;
-    use oxc_span::GetSpan;
-    let span = decl.span();
-    let text = source[span.start as usize..span.end as usize].to_string();
-    let mut names = Vec::new();
-    match decl {
-        Declaration::VariableDeclaration(vd) => {
-            for d in &vd.declarations {
-                gather_binding_names(&d.id, &mut names);
-            }
-        }
-        Declaration::FunctionDeclaration(f) => {
-            if let Some(id) = &f.id {
-                names.push(id.name.to_string());
-            }
-        }
-        Declaration::ClassDeclaration(c) => {
-            if let Some(id) = &c.id {
-                names.push(id.name.to_string());
-            }
-        }
-        _ => {
-            // TS declarations: bun-transpile strips these; defensive no-op.
-        }
-    }
-    (text, names)
-}
 
 fn gather_binding_names(p: &oxc_ast::ast::BindingPattern<'_>, out: &mut Vec<String>) {
     use oxc_ast::ast::BindingPattern;
@@ -593,6 +610,27 @@ mod tests {
     fn rewrites_export_star() {
         let r = rewrite_to_iife(r#"export * from "./y";"#).unwrap();
         assert!(r.code.contains("for (const __k in"));
+    }
+
+    #[test]
+    fn line_map_preserves_user_lines_for_passthrough() {
+        // 4 lines of input. The middle one is a non-import statement,
+        // the others are an import (synthetic) and an export const (mixed).
+        let src = r#"import { x } from "./y";
+const a = 1;
+const b = 2;
+export const c = 3;
+"#;
+        let r = rewrite_to_iife(src).unwrap();
+        // For every output line, line_map says which input line it came from.
+        // For `const a = 1;` on input line 2 we expect at least one output
+        // line mapped to 2.
+        assert!(r.line_map.contains(&2), "line_map: {:?}", r.line_map);
+        assert!(r.line_map.contains(&3), "line_map: {:?}", r.line_map);
+        // Synthetic lines (the require call) should be 0.
+        assert!(r.line_map.contains(&0), "line_map: {:?}", r.line_map);
+        // No mapping should claim a line beyond the input file.
+        assert!(r.line_map.iter().all(|&l| l <= 4), "line_map: {:?}", r.line_map);
     }
 
     #[test]

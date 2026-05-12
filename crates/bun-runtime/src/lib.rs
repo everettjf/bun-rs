@@ -17,6 +17,7 @@ mod modules;
 mod node_builtins;
 mod process_global;
 mod repl;
+mod sourcemap;
 mod timers;
 mod web;
 
@@ -75,7 +76,8 @@ fn install_global_this(_ctx: &Context) {
 fn format_exception(exc: &JsException) -> String {
     let msg = exc.message();
     if let Some(stack) = exc.stack() {
-        format!("{msg}\n{stack}")
+        let mapped = sourcemap::remap_stack(&stack);
+        format!("{msg}\n{mapped}")
     } else {
         msg
     }

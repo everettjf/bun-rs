@@ -40,6 +40,18 @@ pub struct PreparedModule {
     pub static_imports: Vec<String>,
     /// JS source ready to be wrapped in the IIFE and evaluated.
     pub rewritten: String,
+    /// For each line of `rewritten` (1-indexed), the source line in the
+    /// original *post-transpile* JS (1-indexed; 0 = synthetic line we made
+    /// up, e.g. a `__bun_require` shim for an import).
+    ///
+    /// Note: this map is post-transpile → post-rewriter. If transpile
+    /// (TS → JS) shifted lines too, the user-visible map will be off in
+    /// those frames. For TS files without JSX, oxc's transpile typically
+    /// preserves lines.
+    pub line_map: Vec<u32>,
+    /// The original source text (the user's .ts file). Kept so error
+    /// formatters can show a code excerpt at the offending line.
+    pub original_source: String,
 }
 
 /// One-shot: read a file, transpile if needed, rewrite ESM, return a
@@ -54,5 +66,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
         path: path.to_path_buf(),
         static_imports: analysis.imports,
         rewritten: analysis.code,
+        line_map: analysis.line_map,
+        original_source: source,
     })
 }

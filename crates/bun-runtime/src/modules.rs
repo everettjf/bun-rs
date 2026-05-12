@@ -145,6 +145,13 @@ fn load_module<'ctx>(
 
     // Prepare (read + transpile + rewrite ESM).
     let prepared = bun_loader::prepare(&abs)?;
+    // Register the source map so error stacks can be remapped to the user's
+    // original lines.
+    crate::sourcemap::register(
+        prepared.path.clone(),
+        prepared.line_map.clone(),
+        &prepared.original_source,
+    );
     let parent = abs.parent().unwrap_or_else(|| Path::new("."));
 
     // Wrap in an async function. The body uses `await __bun_require(...)`
@@ -298,8 +305,24 @@ pub fn await_promise<'ctx>(
 
     let reject_clone = outcome.clone();
     let reject_cb = Callback::new(ctx, "__bun_reject", move |args| {
-        let s = args.get(0).to_string();
-        *reject_clone.borrow_mut() = Some(Outcome::Rejected(s));
+        // Build a string that carries both the error message AND its stack
+        // (separated by \n), so the outer caller can remap stack frames.
+        let v = args.get(0);
+        let mut msg = v.to_string();
+        if v.is_object() {
+            if let Ok(obj) = v.to_object() {
+                if let Ok(stack_v) = obj.get_property("stack") {
+                    if stack_v.is_string() {
+                        let stack = stack_v.to_string();
+                        if !stack.is_empty() {
+                            msg.push('\n');
+                            msg.push_str(&crate::sourcemap::remap_stack(&stack));
+                        }
+                    }
+                }
+            }
+        }
+        *reject_clone.borrow_mut() = Some(Outcome::Rejected(msg));
         Ok(Value::new_undefined(args.context()))
     });
 

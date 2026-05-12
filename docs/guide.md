@@ -46,7 +46,7 @@ The script's argv shows up in `process.argv` starting at index 2.
 | `package.json` `exports` / `main` / `module` | ✅ | |
 | Circular imports | 🟡 | Doesn't deadlock, but bindings are a snapshot at import time (CJS-style). True live bindings are P2 work |
 | `require()` | ❌ | All code runs as ESM. If you need `require`, write `await import(...)` |
-| Source maps in error stacks | ❌ | Errors point to bun-rs's rewritten output, not your `.ts` source |
+| Source maps in error stacks | 🟡 | Stack frames are remapped to the user's `.ts` line numbers; columns are dropped. JSX-heavy files may have slight drift because oxc's transpile can shift lines. Synthetic frames (from generated import shims) get tagged `<bunrs-internal>`. |
 
 ---
 

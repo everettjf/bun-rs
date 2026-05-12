@@ -851,6 +851,38 @@ fn writefile_accepts_buffer() {
 }
 
 #[test]
+fn error_stack_maps_to_source_lines() {
+    // Throw on a known line and confirm the stack frame names that line,
+    // not the rewritten/wrapped script line.
+    let dir = tempdir();
+    let bad = dir.join("bad.ts");
+    std::fs::write(
+        &bad,
+        "// line 1\n// line 2\nexport function boom() {\n  throw new Error('x');\n}\n",
+    )
+    .unwrap();
+    let main = dir.join("main.ts");
+    std::fs::write(&main, "import { boom } from './bad';\nboom();\n").unwrap();
+
+    let out = bun_rs().arg(&main).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // Throw is on line 4 of bad.ts (`throw new Error('x');`). Frame should
+    // mention `bad.ts:4` (NOT `:5` from the IIFE wrapper, NOT some other
+    // synthesized number).
+    assert!(
+        stderr.contains("bad.ts:4"),
+        "expected 'bad.ts:4' in stack; got:\n{stderr}"
+    );
+    // The call site in main.ts is on line 2.
+    assert!(
+        stderr.contains("main.ts:2"),
+        "expected 'main.ts:2' in stack; got:\n{stderr}"
+    );
+}
+
+#[test]
 fn node_assert_strict_and_deep() {
     let dir = tempdir();
     std::fs::write(
