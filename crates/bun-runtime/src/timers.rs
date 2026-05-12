@@ -167,14 +167,17 @@ pub fn run_event_loop(ctx: &Context) {
         let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
         let server_active = crate::bun_api::serve::any_active();
         let async_pending = crate::async_rt::has_pending_async();
+        let readline_active = crate::node_builtins::readline::any_active();
         if timer_did || async_did {
             continue;
         }
-        if !server_active && !async_pending && next_timer_deadline().is_none() {
+        if !server_active
+            && !async_pending
+            && !readline_active
+            && next_timer_deadline().is_none()
+        {
             return;
         }
-        // Nothing immediately ready; wait briefly. Cap at the next timer's
-        // deadline so we don't oversleep. 10ms floor keeps the spin cheap.
         let nap = next_timer_deadline()
             .unwrap_or(std::time::Duration::from_millis(50))
             .min(std::time::Duration::from_millis(50))

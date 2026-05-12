@@ -297,6 +297,7 @@
         return i.headers;
       })(),
       body: i.body,
+      signal: i.signal,
     });
     return new Response(raw.body, {
       status: raw.status,

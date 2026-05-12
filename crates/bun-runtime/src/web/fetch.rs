@@ -14,7 +14,30 @@
 
 use bun_jsc::{Callback, Context, Value};
 use bun_jsc_sys as sys;
+use std::collections::HashMap;
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+static CANCELS: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<String>>>> =
+    OnceLock::new();
+static NEXT_CANCEL_ID: AtomicU64 = AtomicU64::new(1);
+
+fn cancels() -> &'static Mutex<HashMap<u64, tokio::sync::oneshot::Sender<String>>> {
+    CANCELS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_cancel(tx: tokio::sync::oneshot::Sender<String>) -> u64 {
+    let id = NEXT_CANCEL_ID.fetch_add(1, Ordering::SeqCst);
+    cancels().lock().unwrap().insert(id, tx);
+    id
+}
+
+fn fire_cancel(id: u64, reason: String) {
+    if let Some(tx) = cancels().lock().unwrap().remove(&id) {
+        let _ = tx.send(reason);
+    }
+}
 
 pub fn install(ctx: &Context) {
     let cb = Callback::new(ctx, "__bun_fetch", |args| {
@@ -61,6 +84,42 @@ pub fn install(ctx: &Context) {
         } else {
             None
         };
+
+        // If the caller passed `signal: AbortSignal`, hook a cancel channel.
+        // Only allocate the channel when a signal is present so missing
+        // signals don't fire a stray "Sender dropped" cancellation.
+        let cancel_rx_opt: Option<tokio::sync::oneshot::Receiver<String>> = (|| {
+            if !init.is_object() {
+                return None;
+            }
+            let init_obj = init.to_object().ok()?;
+            let signal = init_obj.get_property("signal").ok()?;
+            if !signal.is_object() {
+                return None;
+            }
+            let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<String>();
+            let id = register_cancel(cancel_tx);
+            let wire = args
+                .context()
+                .eval(
+                    r#"((signal, id) => {
+                        if (signal.aborted) {
+                            __bun_fetch_abort(id, String(signal.reason || "AbortError"));
+                            return;
+                        }
+                        if (typeof signal.addEventListener === "function") {
+                            signal.addEventListener("abort",
+                                () => __bun_fetch_abort(id, String(signal.reason || "AbortError")));
+                        }
+                    })"#,
+                    Some("[fetch-abort-wire]"),
+                )
+                .ok()?
+                .to_object()
+                .ok()?;
+            let _ = wire.call(None, &[signal, Value::new_number(args.context(), id as f64)]);
+            Some(cancel_rx)
+        })();
 
         // Build deferred promise.
         let ctx_ref = args.context();
@@ -112,10 +171,25 @@ pub fn install(ctx: &Context) {
             if let Some(b) = body_bytes {
                 req = req.body(b);
             }
-            let resp = match req.send().await {
+            let mut cancel_rx = cancel_rx_opt;
+            let send_fut = req.send();
+            tokio::pin!(send_fut);
+            let resp_result = if let Some(rx) = cancel_rx.as_mut() {
+                tokio::select! {
+                    r = &mut send_fut => r.map_err(|e| format!("fetch error: {e}")),
+                    reason = rx => {
+                        let msg = reason.unwrap_or_else(|_| "aborted".to_string());
+                        deliver(resolve_id, reject_id, Err(msg));
+                        return;
+                    }
+                }
+            } else {
+                send_fut.await.map_err(|e| format!("fetch error: {e}"))
+            };
+            let resp = match resp_result {
                 Ok(r) => r,
                 Err(e) => {
-                    deliver(resolve_id, reject_id, Err(format!("fetch error: {e}")));
+                    deliver(resolve_id, reject_id, Err(e));
                     return;
                 }
             };
@@ -142,6 +216,18 @@ pub fn install(ctx: &Context) {
         .set_property("__bun_fetch", &cb.value_in(ctx))
         .unwrap();
     std::mem::forget(cb);
+
+    // Used by the JS-side abort listener registered above.
+    let abort_cb = Callback::new(ctx, "__bun_fetch_abort", |args| {
+        let id = args.get(0).to_number() as u64;
+        let reason = args.get(1).to_string();
+        fire_cancel(id, reason);
+        Ok(Value::new_undefined(args.context()))
+    });
+    ctx.global_object()
+        .set_property("__bun_fetch_abort", &abort_cb.value_in(ctx))
+        .unwrap();
+    std::mem::forget(abort_cb);
 }
 
 struct FetchResult {

@@ -815,6 +815,66 @@ fn bun_test_runner_reports_failure() {
 }
 
 #[test]
+fn readline_callback_form() {
+    use std::io::Write;
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import readline from "node:readline";
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        rl.question("name? ", (name) => {
+            console.log("hi " + name);
+            rl.close();
+        });
+        "#,
+    )
+    .unwrap();
+    let mut child = bun_rs()
+        .arg(dir.join("m.ts"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"world\n").unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("hi world"), "stdout: {s}");
+}
+
+#[test]
+fn readline_promises_form() {
+    use std::io::Write;
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { promises as rl } from "node:readline";
+        const iface = rl.createInterface({ input: process.stdin, output: process.stdout });
+        const name = await iface.question("name? ");
+        console.log("hi " + name);
+        iface.close();
+        "#,
+    )
+    .unwrap();
+    let mut child = bun_rs()
+        .arg(dir.join("m.ts"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"jim\n").unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("hi jim"));
+}
+
+#[test]
 fn abort_controller_basics() {
     let out = bun_rs()
         .args([

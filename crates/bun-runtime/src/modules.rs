@@ -352,6 +352,7 @@ pub fn await_promise<'ctx>(
         // Nothing immediately ready; wait briefly.
         let can_make_progress = crate::async_rt::has_pending_async()
             || crate::bun_api::serve::any_active()
+            || crate::node_builtins::readline::any_active()
             || crate::timers::next_timer_deadline().is_some();
         if !can_make_progress {
             return Err(
