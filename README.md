@@ -2,60 +2,106 @@
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** P0 done, most of P1 done (Day 1 of MVP). See [`docs/plan.md`](docs/plan.md).
+**Status:** MVP runtime + most of P2 + most of P3 in 3 days. See [`docs/plan.md`](docs/plan.md).
 
-## What works today
+## Quick start
 
 ```sh
 cargo build --release
-./target/release/bun-rs --version            # bun-rs 0.0.1
+./target/release/bun-rs --version
+./target/release/bun-rs                    # REPL
 ./target/release/bun-rs -e "console.log(1+1)"
-./target/release/bun-rs -p "40 + 2"          # 42
-./target/release/bun-rs run examples/hello.ts
-./target/release/bun-rs run app.ts           # multi-file TS w/ ESM imports
+./target/release/bun-rs -p "40 + 2"        # 42
+./target/release/bun-rs run app.ts         # multi-file TS + ESM
+./target/release/bun-rs run server.ts      # Bun.serve, fetch, ...
 ```
 
-- TypeScript / TSX files transpile via [oxc](https://oxc.rs/) and run in JSC
-- **ESM imports** (static): named, default, namespace, renamed, `export * from`,
-  `export { x } from`, `export * as ns from`, circular deps,
-  diamond-shared deps, `node_modules` via `oxc_resolver`
+## What works
+
+### Language
+
+- TypeScript / TSX transpiled via [oxc](https://oxc.rs/)
+- ESM:
+  - Static `import` / `export` (named, default, namespace, renamed, `export *`,
+    `export { x } from`, `export * as ns from`)
+  - **Dynamic `import()`**, **top-level `await`**
+  - Circular imports (CJS-style snapshot), diamond shared deps
+  - `node:` builtins, `node_modules` lookup via `oxc_resolver`
+- `import.meta.url` / `.filename` / `.dirname` / `.main`
+- Native async / await + Promise resolution
+- REPL with multi-line continuation
+
+### Built-in globals
+
 - `console.{log,info,warn,error,debug,trace,dir}`
 - `process.{argv,env,cwd,exit,platform,arch,pid,versions}`
 - `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval`
-- `queueMicrotask` (Promise-based polyfill)
-- Native async/await + Promise resolution
+- `queueMicrotask`
+- **`fetch`** (blocking ureq under the hood)
+- `URL` / `URLSearchParams` (parsing via Rust `url`)
+- `Headers` / `Request` / `Response`
+- `TextEncoder` / `TextDecoder` (UTF-8)
 
-## What doesn't work yet
+### `node:` modules
 
-- Dynamic `import()` and top-level `await` (Phase 2, with tokio)
-- `Bun.serve`, `fetch`, any Web API
-- `node:fs`, `node:path`, …
-- REPL
-- Sourcemap-aware error stacks
-- Linux & Windows (macOS only for now — uses the system JavaScriptCore.framework)
+| Module | Coverage |
+|---|---|
+| `node:path` | join / resolve / normalize / dirname / basename / extname / isAbsolute / relative, posix + win32 |
+| `node:os` | platform / arch / type / release / hostname / cpus / totalmem / userInfo / EOL |
+| `node:fs` | sync: readFile / writeFile / appendFile / exists / stat / readdir / mkdir / rm / rename / unlink / copyFile / realpath / mkdtemp; `fs.promises` mirrors sync |
+
+### `Bun.*` namespace
+
+- **`Bun.serve({ port, fetch })`** — minimal HTTP server (tiny_http, sync handler)
+- **`Bun.file(path)`** — Blob-like with `text()` / `json()` / `bytes()` / `arrayBuffer()` / `exists()` / `size` / `name` / `type`
+- `Bun.write(path, data)`
+- `Bun.sleep(ms)`
+- `Bun.env`
+- `Bun.version` / `Bun.revision`
+
+### Platforms
+
+- ✅ **macOS** (system `JavaScriptCore.framework`)
+- 🟡 **Linux** (`libjavascriptcoregtk-4.1`) — build set up, not yet smoke-tested
+- ❌ **Windows** — no public JSC build; would need to compile WebKit ourselves
+
+See [`docs/build.md`](docs/build.md).
+
+## What's still missing
+
+- **Buffer** (`node:buffer`) — readFileSync returns String for now, not Buffer
+- **`node:child_process`** (`spawn` / `exec`)
+- **Stream APIs** (`ReadableStream` / `WritableStream` / `node:stream`)
+- **HTTPS** in Bun.serve, **HTTP/2**, **WebSocket**
+- **Live ESM bindings** (`import` is currently a value snapshot at load time)
+- **Sourcemap-aware error stacks** (errors point to rewritten lines, not source)
+- **Worker / Cluster**
+- **bundler** / **package manager** (`bun install`, `bun build`)
+- **shell / SQL / bake**
 
 ## Layout
 
 ```
 crates/
   bun-cli/         entrypoint binary
-  bun-runtime/     event loop + globals (console / process / timers / module loader)
+  bun-runtime/     event loop + globals (console / process / timers /
+                                          modules / web / Bun.* / node:*)
   bun-jsc-sys/     raw JSC C API FFI
   bun-jsc/         safe RAII wrapper
   bun-transpile/   oxc-powered TS/JSX → JS
-  bun-loader/      path resolver (oxc_resolver) + ESM → IIFE rewriter
+  bun-loader/      path resolver + ESM → IIFE rewriter
 ```
 
 ## Build & test
 
 ```sh
-cargo build --workspace             # debug build (~10s cold)
-cargo build --release -p bun-cli    # 3.2MB single binary
-cargo test --workspace              # 56 tests, all green on macOS arm64
+cargo build --workspace             # debug build
+cargo build --release -p bun-cli    # ~3.5MB single binary
+cargo test --workspace              # 70+ tests, all green on macOS arm64
 ```
 
-Toolchain: pinned to a recent Rust nightly (oxc uses `if let` match guards).
-See [`rust-toolchain.toml`](rust-toolchain.toml).
+Toolchain: nightly Rust (oxc uses `if let` match guards). See
+[`rust-toolchain.toml`](rust-toolchain.toml).
 
 ## License
 

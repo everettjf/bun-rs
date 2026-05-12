@@ -104,6 +104,17 @@ bun-rs/
 
 ## 5. 当前进度
 
+### Day 3(2026-05-12):剩余 P1 + P2 + P3 大部分
+- ✅ **ESM Phase 2**:模块包装改 `async function`,静态 `import` → `await __bun_require`,动态 `import()` 改写,top-level await
+- ✅ `import.meta.url` / `.filename` / `.dirname` / `.main`
+- ✅ **REPL**(`bunrs` 无参 → 交互式,多行 continuation)
+- ✅ `node:path` / `node:os` / `node:fs`(sync + Promises shim)+ `node:` 路由
+- ✅ **`fetch`** + `URL` / `URLSearchParams` / `Headers` / `Request` / `Response` + `TextEncoder`/`TextDecoder`(JS polyfill,Rust url crate + ureq)
+- ✅ **`Bun.file`** / `Bun.write` / `Bun.sleep` / `Bun.env`
+- ✅ **`Bun.serve`** — tiny_http 后端,JS 处理跑在主线程
+- ✅ Linux 构建路径(`libjavascriptcoregtk-4.1` via pkg-config),GitHub Actions CI 配置好
+- ✅ 75+ tests pass
+
 ### Day 2(2026-05-11):ESM Phase 1
 - ✅ 新 crate `bun-loader`(Resolver + ESM → IIFE Rewriter)
 - ✅ `bun-runtime::modules` 绑定 `__bun_require`、按绝对路径 cache、循环引用安全
