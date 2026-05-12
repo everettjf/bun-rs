@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use bun_jsc::{Context, Value};
 use bun_jsc_sys as sys;
 
+pub mod os;
 pub mod path;
 
 // Per-thread cache of built builtin exports. The Value's raw ref is kept
@@ -25,6 +26,7 @@ thread_local! {
 pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
     let builder: fn(&Context) -> Value<'_> = match name {
         "path" | "node:path" => path::build,
+        "os" | "node:os" => os::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -44,6 +46,7 @@ fn canonical_name(s: &str) -> &'static str {
     // builtin names are a small fixed set. Map to a 'static slice.
     match s {
         "path" | "node:path" => "path",
+        "os" | "node:os" => "os",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }

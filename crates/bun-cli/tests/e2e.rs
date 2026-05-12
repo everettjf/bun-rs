@@ -561,6 +561,28 @@ fn node_path_named_imports() {
 }
 
 #[test]
+fn node_os_basic() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import os from "node:os";
+        const valid = ["darwin","linux","win32","freebsd","openbsd","sunos","aix"];
+        if (!valid.includes(os.platform())) throw new Error("bad platform: " + os.platform());
+        if (typeof os.arch() !== "string") throw new Error("arch should be string");
+        if (typeof os.hostname() !== "string") throw new Error("hostname should be string");
+        if (typeof os.totalmem() !== "number") throw new Error("totalmem should be number");
+        if (os.cpus().length < 1) throw new Error("cpus.length should be >= 1");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn import_meta_url_and_friends() {
     let dir = tempdir();
     let file = dir.join("m.ts");
