@@ -322,8 +322,33 @@ pub fn await_promise<'ctx>(
         if outcome.borrow().is_some() {
             break;
         }
+        // Pump async-runtime completions (e.g. resolved fetch).
+        let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
+        if async_did {
+            continue;
+        }
+        // Pump pending Bun.serve requests — important for cases like
+        // `await fetch("http://127.0.0.1:" + server.port)` where the
+        // server can't respond unless we drain its queue.
+        let server_did =
+            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(5));
+        if server_did {
+            continue;
+        }
+        // Otherwise fire next timer.
         if !run_one_tick(ctx) {
-            return Err("event loop deadlocked: promise pending with no work to do".to_string());
+            // No timer, no async task we could deliver, no completion —
+            // and yet the promise is pending. If async work is still in
+            // flight we just yield briefly and try again.
+            if crate::async_rt::has_pending_async()
+                || crate::bun_api::serve::any_active()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+            return Err(
+                "event loop deadlocked: promise pending with no work to do".to_string()
+            );
         }
     }
 

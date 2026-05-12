@@ -159,15 +159,22 @@ fn has_pending_timers() -> bool {
     TIMERS.with(|t| !t.borrow().is_empty())
 }
 
-/// Drive timer firings until the registry is empty AND no servers are
-/// listening. Servers (Bun.serve) keep the loop running indefinitely.
+/// Drive timer firings + drain async-runtime → JS task queue + service
+/// Bun.serve requests, until nothing is in flight.
 pub fn run_event_loop(ctx: &Context) {
     loop {
         let timer_did_work = run_one_tick(ctx);
+        let async_did_work = crate::async_rt::drain_js_tasks(ctx) > 0;
         let server_did_work =
-            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(50));
+            crate::bun_api::serve::poll_one(ctx, std::time::Duration::from_millis(20));
         let servers_active = crate::bun_api::serve::any_active();
-        if !timer_did_work && !server_did_work && !servers_active {
+        let async_pending = crate::async_rt::has_pending_async();
+        if !timer_did_work
+            && !async_did_work
+            && !server_did_work
+            && !servers_active
+            && !async_pending
+        {
             return;
         }
     }

@@ -657,6 +657,49 @@ fn bun_file_roundtrip() {
 }
 
 #[test]
+fn async_fetch_does_not_block_timers() {
+    // Local Bun.serve that delays its response — confirms fetch is async
+    // (a setTimeout fires before the fetch resolves).
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        const server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                return new Promise(resolve =>
+                    setTimeout(() => resolve(new Response("ok")), 100)
+                );
+            },
+        });
+        const t0 = Date.now();
+        const order: string[] = [];
+        setTimeout(() => order.push("timer:" + (Date.now() - t0)), 20);
+        const r = await fetch("http://127.0.0.1:" + server.port + "/");
+        order.push("fetch:" + (Date.now() - t0));
+        await r.text();
+        server.stop();
+        // Timer should have fired BEFORE the fetch resolved.
+        const t = order[0], f = order[1];
+        if (!t.startsWith("timer:") || !f.startsWith("fetch:")) {
+            throw new Error("wrong order: " + JSON.stringify(order));
+        }
+        const tMs = parseInt(t.slice(6));
+        const fMs = parseInt(f.slice(6));
+        if (tMs >= fMs) throw new Error("timer should fire before fetch: " + tMs + " vs " + fMs);
+        if (fMs < 90) throw new Error("fetch should take ~100ms, got " + fMs);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
+    assert_eq!(stdout.trim(), "ok");
+}
+
+#[test]
 fn bun_serve_echo() {
     use std::io::{Read, Write};
     let dir = tempdir();

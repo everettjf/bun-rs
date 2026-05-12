@@ -16,6 +16,12 @@ impl<'ctx> Object<'ctx> {
         Self { ctx, raw }
     }
 
+    /// Public escape hatch for runtime modules that hold raw refs and need
+    /// to call them later. Mirrors [`bun_jsc::Value::from_raw_public`].
+    pub unsafe fn from_raw_for_runtime(ctx: &'ctx Context, raw: sys::JSObjectRef) -> Self {
+        Self { ctx, raw }
+    }
+
     pub fn as_raw(&self) -> sys::JSObjectRef {
         self.raw
     }

@@ -256,10 +256,11 @@
   g.Response = Response;
 
   // ─────────────────────────── fetch ───────────────────────────
-  g.fetch = function (url, init) {
+  // __bun_fetch is async (returns a Promise) on the Rust side, so wrap.
+  g.fetch = async function (url, init) {
     const u = typeof url === "string" ? url : url.url;
     const i = init || {};
-    const raw = __bun_fetch(u, {
+    const raw = await __bun_fetch(u, {
       method: (i.method || "GET").toUpperCase(),
       headers: (function () {
         if (!i.headers) return {};
@@ -272,12 +273,11 @@
       })(),
       body: i.body,
     });
-    const r = new Response(raw.body, {
+    return new Response(raw.body, {
       status: raw.status,
       headers: raw.headers,
       url: raw.url,
       _bytes: raw.bytes,
     });
-    return Promise.resolve(r);
   };
 })(globalThis);

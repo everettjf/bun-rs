@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use bun_jsc::{Callback, Context, JsException, Value};
 
+mod async_rt;
 mod buffer;
 mod bun_api;
 mod console;
@@ -31,6 +32,7 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new(argv: Vec<String>) -> Self {
+        async_rt::init();
         let ctx = Context::new();
         install_console(&ctx);
         install_process(&ctx, argv);
