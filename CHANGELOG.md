@@ -3,6 +3,62 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [1.0.0] – 2026-05-12
+
+The 1.0 release. The public surface documented in `docs/guide.md` is
+considered stable; anything we'd break would be 2.0.
+
+This release consolidates everything done since 0.3.0 plus the
+foundations for production use.
+
+### Added since 0.3.0
+
+**Native databases / FFI**
+- `bun:sqlite` — full Database / query / prepare API (positional + named
+  params, blob round-trip)
+- `bun:ffi` — `dlopen(path, { sym: { args, returns } })` with i8…u64 /
+  f32 / f64 / pointer / cstring types
+
+**HTTP stack**
+- `Bun.serve` over HTTPS — `tls: { key, cert }` option, PEM strings
+  or paths; rustls + tokio-rustls
+- HTTP/2 via ALPN negotiation (`h2` preferred, falls back to http/1.1)
+- `node:http` — `createServer(handler)` + `http.get/request(cb)`,
+  wrapping `Bun.serve` and `fetch` under the hood
+
+**Concurrency / parallelism**
+- `Worker` (WHATWG) — std::thread + per-worker JSC Context + JSON
+  message passing, `postMessage` / `onmessage` / `terminate`
+
+**npm / packaging**
+- `bun-rs install` — fetches from registry.npmjs.org, extracts
+  tarballs to `node_modules/`, writes `bun-rs.lock.json`. Supports
+  scoped packages, `--production`. Env override: `BUN_REGISTRY`
+- **CJS interop** — `require("./y")` style modules (`module.exports = …`)
+  load correctly, and `import x from "cjs-pkg"` follows the
+  esModuleInterop convention so common npm packages just work
+
+**Compression**
+- `node:zlib` — deflate / inflate / gzip / gunzip / deflateRaw /
+  inflateRaw, sync + callback-async forms
+
+### Changed
+- Module wrapper now passes a `__module` indirection so CJS and ESM
+  bodies share the same `exports` storage. ESM modules are stamped
+  `__esModule = true` so the default-import shim distinguishes them
+- Sourcemap remapper updated for the new 4-line wrapper prefix
+- Cleaned up dead `#[warn]` paths
+
+### Known limitations preserved
+- No live ESM bindings (default-imports are still value snapshots)
+- Worker doesn't support SharedArrayBuffer / transferables / nested workers
+- `fetch` doesn't honor `AbortSignal` mid-stream — only at request setup
+- `bun-rs install` resolves loose semver (^/~ stripped to exact) —
+  pinned versions and `latest` are reliable
+- macOS + Linux only (no Windows JSC build)
+- Sourcemap remap is line-only (no column), and may drift for
+  JSX-heavy files where oxc's transpile shifts lines
+
 ## [0.3.0] – 2026-05-12
 
 The theme: workflow — test runner, bundler, REPL polish.

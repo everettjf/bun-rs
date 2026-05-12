@@ -213,7 +213,7 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 fn build_tls_config(
     tls_v: &Value<'_>,
 ) -> Result<std::sync::Arc<tokio_rustls::rustls::ServerConfig>, String> {
-    use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    use tokio_rustls::rustls::pki_types::CertificateDer;
 
     let obj = tls_v.to_object().map_err(|e| e.to_string())?;
     let key_v = obj.get_property("key").map_err(|e| e.to_string())?;

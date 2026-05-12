@@ -2,8 +2,24 @@
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** 0.3.0 — TypeScript + ESM runtime + test runner + bundler
-+ streams + concurrent HTTP + readline + WebSocket. See:
+**Status:** 1.0.0 — TypeScript runtime with the public surface
+documented in [`docs/guide.md`](docs/guide.md) considered stable.
+Anything we'd break would be 2.0.
+
+What you get out of the box:
+- `bun-rs run app.ts` — TypeScript + full ESM (static + dynamic
+  `import()` + top-level `await` + `node_modules` + CJS interop)
+- `bun-rs test` — Jest-style test runner
+- `bun-rs build app.ts -o out.js` — single-file bundler
+- `bun-rs install` — npm package installer
+- HTTP / HTTPS / HTTP/2 server (`Bun.serve` + `node:http`)
+- `WebSocket`, `fetch`, `URL`, `Buffer`, full WHATWG Streams
+- Threading via `Worker`
+- `bun:sqlite` + `bun:ffi`
+- Common `node:*` modules: fs/path/os/buffer/events/util/crypto/
+  child_process/assert/querystring/url/stream/readline/zlib/http
+
+See:
 
 - [`docs/tutorial.md`](docs/tutorial.md) — 30-minute walk-through
 - [`docs/guide.md`](docs/guide.md) — full reference: what works, what doesn't
@@ -73,10 +89,14 @@ cargo build --release
 | `node:url` | URL, URLSearchParams, fileURLToPath, pathToFileURL |
 | `node:stream` | Readable / Writable / Duplex / PassThrough, pipeline / finished, Web Streams interop |
 | `node:readline` | createInterface, question/on('line')/on('close'), readline.promises |
+| `node:zlib` | gzip / gunzip / deflate / inflate / raw, sync + async |
+| `node:http` | createServer + get/request (wraps Bun.serve + fetch) |
+| `bun:sqlite` | Database / query / prepare (rusqlite) |
+| `bun:ffi` | dlopen + primitive types via libffi |
 
 ### `Bun.*` namespace
 
-- **`Bun.serve({ port, fetch })`** — concurrent HTTP server (hyper, tokio per-request)
+- **`Bun.serve({ port, fetch, tls? })`** — concurrent HTTP / HTTPS / HTTP/2 (hyper, tokio per-request, ALPN-negotiated)
 - **`Bun.file(path)`** — Blob-like with `text()` / `json()` / `bytes()` / `arrayBuffer()` / `exists()` / `size` / `name` / `type`
 - `Bun.write(path, data)`
 - `Bun.sleep(ms)`
@@ -91,13 +111,20 @@ cargo build --release
 
 See [`docs/build.md`](docs/build.md).
 
-## What's still missing
+## Known limitations (1.0 deliberate scope)
 
-- **HTTPS** in Bun.serve, **HTTP/2** (WebSocket *server* TBD)
-- **Live ESM bindings** (`import` is currently a value snapshot at load time)
-- **Worker / Cluster**
-- **`bun install`** (no package manager yet)
-- **shell / SQL / bake / FFI**
+- **Live ESM bindings** — `import { x }` is a value snapshot at load
+  time, not a live binding (matters only for circular dependencies)
+- **`fetch` AbortSignal** fires at request setup; doesn't interrupt
+  mid-stream
+- **`bun-rs install`** does loose semver (^/~ stripped to exact);
+  reliable for pinned and `latest`, hit-and-miss for ranges
+- **`Worker`** doesn't support SharedArrayBuffer / transferables /
+  nesting; messages travel as JSON
+- **Sourcemap stacks** map lines, not columns; JSX-heavy files may drift
+- **macOS + Linux only** — no Windows JSC build available
+- **WebSocket** is client-only (server upgrade in `Bun.serve` TBD)
+- **shell / SQL beyond bun:sqlite / bake / cluster** — out of scope
 
 ## Layout
 
@@ -112,6 +139,7 @@ crates/
   bun-transpile/   oxc-powered TS/JSX → JS
   bun-loader/      path resolver + ESM → IIFE rewriter (+ line-map for stacks)
   bun-bundler/     single-file bundler (wraps bun-loader's graph walk)
+  bun-install/     npm registry client + tarball extractor
 ```
 
 ## Build & test

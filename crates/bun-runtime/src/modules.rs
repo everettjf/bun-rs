@@ -14,7 +14,6 @@ use bun_jsc::{Callback, Context, Value};
 use bun_jsc_sys as sys;
 use bun_loader::Resolver;
 
-use crate::timers::run_one_tick;
 
 thread_local! {
     static CACHE: RefCell<HashMap<PathBuf, sys::JSValueRef>> = RefCell::new(HashMap::new());

@@ -15,7 +15,7 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    BindingIdentifier, Declaration, ExportDefaultDeclarationKind, ImportDeclarationSpecifier,
+    BindingIdentifier, ExportDefaultDeclarationKind, ImportDeclarationSpecifier,
     ImportExpression, MetaProperty, ModuleExportName, Statement,
 };
 use oxc_ast_visit::Visit;
