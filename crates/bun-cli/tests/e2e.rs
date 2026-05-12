@@ -525,6 +525,42 @@ fn dynamic_import_with_then() {
 }
 
 #[test]
+fn node_path_basic_methods() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import path from "node:path";
+        console.log(path.join("a", "b", "c"));
+        console.log(path.dirname("/foo/bar/baz.txt"));
+        console.log(path.basename("/foo/bar/baz.txt", ".txt"));
+        console.log(path.extname("/x.tar.gz"));
+        console.log(path.isAbsolute("/x"));
+        console.log(path.normalize("/a/./b/../c"));
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let s = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<_> = s.trim().lines().collect();
+    assert_eq!(lines, vec!["a/b/c", "/foo/bar", "baz", ".gz", "true", "/a/c"]);
+}
+
+#[test]
+fn node_path_named_imports() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        "import { join, sep } from 'node:path';\nconsole.log(join('x','y'), sep);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("x/y"));
+}
+
+#[test]
 fn import_meta_url_and_friends() {
     let dir = tempdir();
     let file = dir.join("m.ts");

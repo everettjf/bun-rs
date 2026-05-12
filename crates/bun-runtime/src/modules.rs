@@ -96,6 +96,26 @@ fn load_module<'ctx>(
     spec: &str,
     importer: &Path,
 ) -> Result<Value<'ctx>, LoaderRuntimeError> {
+    // Routing: `node:foo` and bare `foo` (when foo is a Node builtin) go
+    // through `node_builtins::load`. Returning here means the JS-side
+    // `await __bun_require("node:foo", ...)` resolves with the builtin's
+    // exports object directly, no file I/O.
+    if let Some(name) = spec.strip_prefix("node:") {
+        if let Some(v) = crate::node_builtins::load(ctx, name) {
+            return Ok(v);
+        }
+        return Err(LoaderRuntimeError::Resolve(
+            bun_loader::ResolveError::NotFound {
+                spec: spec.to_string(),
+                from: importer.to_path_buf(),
+            },
+        ));
+    }
+    if let Some(v) = crate::node_builtins::load(ctx, spec) {
+        // Allow bare `import "path"` etc. as a convenience.
+        return Ok(v);
+    }
+
     // Absolute paths bypass resolution.
     let abs: PathBuf = if Path::new(spec).is_absolute() {
         PathBuf::from(spec)

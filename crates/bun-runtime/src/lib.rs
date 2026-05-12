@@ -11,6 +11,7 @@ use bun_jsc::{Callback, Context, JsException, Value};
 
 mod console;
 mod modules;
+mod node_builtins;
 mod process_global;
 mod repl;
 mod timers;
