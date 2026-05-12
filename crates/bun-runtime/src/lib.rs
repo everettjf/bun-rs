@@ -18,6 +18,7 @@ mod node_builtins;
 mod process_global;
 mod repl;
 mod sourcemap;
+mod test_runner;
 mod timers;
 mod web;
 
@@ -165,6 +166,11 @@ fn run() -> Result<(), RuntimeError> {
                 }
                 Err(exc) => Err(RuntimeError::Throw(format_exception(&exc))),
             }
+        }
+        "test" => {
+            let paths: Vec<String> = args.drain(1..).collect();
+            let code = test_runner::run_tests(paths);
+            std::process::exit(code);
         }
         "run" => {
             let file = args.get(1).ok_or(RuntimeError::Usage)?.clone();

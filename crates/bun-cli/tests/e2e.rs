@@ -779,6 +779,42 @@ fn bun_serve_concurrent_requests() {
 }
 
 #[test]
+fn bun_test_runner_basics() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("sample.test.ts"),
+        r#"
+        describe("math", () => {
+            test("plus", () => expect(1 + 1).toBe(2));
+            test("eq", () => expect({a:1}).toEqual({a:1}));
+        });
+        test("not", () => expect(1).not.toBe(2));
+        test("async", async () => expect(await Promise.resolve(7)).toBe(7));
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg("test").arg(&dir).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("4 passed"), "stderr: {stderr}");
+    assert!(stderr.contains("0 failed"), "stderr: {stderr}");
+}
+
+#[test]
+fn bun_test_runner_reports_failure() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("bad.test.ts"),
+        "test(\"will fail\", () => expect(1).toBe(2));\n",
+    )
+    .unwrap();
+    let out = bun_rs().arg("test").arg(&dir).output().unwrap();
+    assert!(!out.status.success(), "should have failed");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("1 failed"), "stderr: {stderr}");
+}
+
+#[test]
 fn abort_controller_basics() {
     let out = bun_rs()
         .args([
