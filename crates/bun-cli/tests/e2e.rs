@@ -424,6 +424,64 @@ fn esm_diamond_shared_dep_evaluated_once() {
 }
 
 #[test]
+fn top_level_await_setTimeout() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("main.ts"),
+        "const v = await new Promise<number>((res) => setTimeout(() => res(99), 10));\n\
+         console.log('got', v);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "got 99");
+}
+
+#[test]
+fn top_level_await_resolved_promise() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("main.ts"),
+        "const v = await Promise.resolve(42);\nconsole.log(v);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "42");
+}
+
+#[test]
+fn dynamic_import_returns_promise() {
+    let dir = tempdir();
+    std::fs::write(dir.join("dep.ts"), "export const answer = 7;").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "const mod = await import('./dep');\nconsole.log('answer:', mod.answer);",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "answer: 7"
+    );
+}
+
+#[test]
+fn dynamic_import_with_then() {
+    let dir = tempdir();
+    std::fs::write(dir.join("dep.ts"), "export default 'hi';").unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        "import('./dep').then(m => console.log(m.default));",
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
+}
+
+#[test]
 fn esm_missing_specifier_errors() {
     let dir = tempdir();
     std::fs::write(

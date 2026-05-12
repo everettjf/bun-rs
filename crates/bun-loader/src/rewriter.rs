@@ -16,10 +16,11 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     BindingIdentifier, Declaration, ExportDefaultDeclarationKind, ImportDeclarationSpecifier,
-    ModuleExportName, Statement,
+    ImportExpression, ModuleExportName, Statement,
 };
+use oxc_ast_visit::Visit;
 use oxc_parser::Parser;
-use oxc_span::SourceType;
+use oxc_span::{GetSpan, SourceType};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RewriteError {
@@ -40,6 +41,73 @@ pub struct ModuleAnalysis {
 
 /// Rewrite a JS source string. Caller passes JS (post-TS-transpile).
 pub fn rewrite_to_iife(source: &str) -> Result<ModuleAnalysis, RewriteError> {
+    // Two passes:
+    // 1. Replace dynamic `import(spec)` with `__bun_require(spec, __filename)`
+    //    at every nested location (handled by `lower_dynamic_imports`).
+    // 2. Rewrite top-level static `import`/`export` into `await __bun_require`
+    //    + `__exports.X = …` (the original logic, below).
+    let source = lower_dynamic_imports(source)?;
+    rewrite_static(&source)
+}
+
+/// Pass 1 — rewrite every `import(...)` expression in the source so it calls
+/// `__bun_require(spec, __filename)` instead. Static `import`/`export`
+/// statements are left for the next pass.
+fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
+    let allocator = Allocator::default();
+    let st = SourceType::default().with_module(true);
+    let parsed = Parser::new(&allocator, source, st).parse();
+    if !parsed.errors.is_empty() {
+        let msg = parsed
+            .errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(RewriteError::Parse(msg));
+    }
+
+    struct Spot {
+        start: u32,
+        end: u32,
+        src_start: u32,
+        src_end: u32,
+    }
+    struct Collect {
+        spots: Vec<Spot>,
+    }
+    impl<'a> Visit<'a> for Collect {
+        fn visit_import_expression(&mut self, it: &ImportExpression<'a>) {
+            let sp = it.span;
+            let src_sp = it.source.span();
+            self.spots.push(Spot {
+                start: sp.start,
+                end: sp.end,
+                src_start: src_sp.start,
+                src_end: src_sp.end,
+            });
+        }
+    }
+    let mut c = Collect { spots: Vec::new() };
+    c.visit_program(&parsed.program);
+
+    if c.spots.is_empty() {
+        return Ok(source.to_string());
+    }
+
+    // Apply end → start so earlier spans remain valid.
+    let mut out = source.to_string();
+    let mut spots = c.spots;
+    spots.sort_by_key(|s| std::cmp::Reverse(s.start));
+    for s in spots {
+        let arg_text = &source[s.src_start as usize..s.src_end as usize];
+        let replacement = format!("__bun_require({arg_text}, __filename)");
+        out.replace_range(s.start as usize..s.end as usize, &replacement);
+    }
+    Ok(out)
+}
+
+fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
     let allocator = Allocator::default();
     // Use SourceType::default()-equivalent: JS module. We tell oxc this is a
     // module so import/export at top-level is accepted.
@@ -80,7 +148,7 @@ pub fn rewrite_to_iife(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                 let spec_text = &d.source.value;
                 let local = alloc_local(&mut imports, spec_text);
                 writeln_(&mut out, &format!(
-                    "const {local} = __bun_require({}, __filename);",
+                    "const {local} = await __bun_require({}, __filename);",
                     js_string(spec_text)
                 ));
 
@@ -129,7 +197,7 @@ pub fn rewrite_to_iife(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                 writeln_(
                     &mut out,
                     &format!(
-                        "const {local} = __bun_require({}, __filename);",
+                        "const {local} = await __bun_require({}, __filename);",
                         js_string(spec_text)
                     ),
                 );
@@ -182,7 +250,7 @@ pub fn rewrite_to_iife(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     writeln_(
                         &mut out,
                         &format!(
-                            "const {local} = __bun_require({}, __filename);",
+                            "const {local} = await __bun_require({}, __filename);",
                             js_string(spec_text)
                         ),
                     );
@@ -431,7 +499,7 @@ mod tests {
     fn rewrites_default_import() {
         let r = rewrite_to_iife(r#"import foo from "./bar"; foo();"#).unwrap();
         assert_eq!(r.imports, vec!["./bar".to_string()]);
-        assert!(r.code.contains("__bun_require(\"./bar\""));
+        assert!(r.code.contains("await __bun_require(\"./bar\""));
         assert!(r.code.contains("const foo ="));
         assert!(r.code.contains(".default"));
     }
@@ -454,7 +522,7 @@ mod tests {
     #[test]
     fn rewrites_side_effect_import() {
         let r = rewrite_to_iife(r#"import "./side";"#).unwrap();
-        assert!(r.code.contains("__bun_require(\"./side\""));
+        assert!(r.code.contains("await __bun_require(\"./side\""));
     }
 
     #[test]

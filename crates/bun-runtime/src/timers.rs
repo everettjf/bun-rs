@@ -160,17 +160,21 @@ fn has_pending_timers() -> bool {
 }
 
 /// Drive timer firings until the registry is empty.
-///
-/// Call after the main script finishes evaluating. Returns when there are no
-/// more pending timers (i.e. all `setTimeout`s have fired and either weren't
-/// repeating or were `clearInterval`d).
 pub fn run_event_loop(ctx: &Context) {
+    while run_one_tick(ctx) {}
+}
+
+/// Fire the next due timer (sleeping until its deadline if needed). Returns
+/// `false` when there are no pending timers.
+///
+/// This is the building block both [`run_event_loop`] and
+/// [`crate::modules::await_promise`] sit on top of.
+pub fn run_one_tick(ctx: &Context) -> bool {
     loop {
         let next = TIMERS.with(|t| t.borrow_mut().pop());
-        let Some(entry) = next else { break };
+        let Some(entry) = next else { return false };
 
         if is_canceled(entry.id) {
-            // Drop the protect ref and skip.
             unsafe {
                 sys::JSValueUnprotect(entry.ctx, entry.callback as sys::JSValueRef);
             }
@@ -182,7 +186,6 @@ pub fn run_event_loop(ctx: &Context) {
             std::thread::sleep(entry.deadline - now);
         }
 
-        // Fire: call back into JS.
         unsafe {
             let mut exc: sys::JSValueRef = std::ptr::null();
             let _ = sys::JSObjectCallAsFunction(
@@ -194,7 +197,6 @@ pub fn run_event_loop(ctx: &Context) {
                 &mut exc,
             );
             if !exc.is_null() {
-                // Mirror Node: log to stderr and continue draining other timers.
                 let s = sys::JSValueToStringCopy(entry.ctx, exc, std::ptr::null_mut());
                 if !s.is_null() {
                     let msg = JsString::adopt(s).to_string();
@@ -207,18 +209,21 @@ pub fn run_event_loop(ctx: &Context) {
         }
 
         if let Some(period) = entry.period {
-            // Re-arm a repeating timer with the same id.
             let next_entry = TimerEntry {
                 deadline: Instant::now() + period,
                 ..entry
             };
             TIMERS.with(|t| t.borrow_mut().push(next_entry));
         } else {
-            // One-shot: drop the protect.
             unsafe {
                 sys::JSValueUnprotect(entry.ctx, entry.callback as sys::JSValueRef);
             }
         }
+        return true;
     }
-    let _ = has_pending_timers; // keep symbol for future debug use
+}
+
+#[allow(dead_code)]
+fn _retain_has_pending() -> bool {
+    has_pending_timers()
 }

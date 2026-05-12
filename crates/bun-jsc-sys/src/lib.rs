@@ -282,6 +282,13 @@ extern "C" {
         exception: *mut JSValueRef,
     ) -> JSObjectRef;
 
+    pub fn JSObjectMakeDeferredPromise(
+        ctx: JSContextRef,
+        resolve: *mut JSObjectRef,
+        reject: *mut JSObjectRef,
+        exception: *mut JSValueRef,
+    ) -> JSObjectRef;
+
     pub fn JSObjectHasProperty(
         ctx: JSContextRef,
         object: JSObjectRef,

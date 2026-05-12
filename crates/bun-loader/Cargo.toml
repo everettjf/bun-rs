@@ -13,5 +13,6 @@ oxc_allocator = "0.129"
 oxc_parser = "0.129"
 oxc_codegen = "0.129"
 oxc_ast = "0.129"
+oxc_ast_visit = "0.129"
 oxc_span = "0.129"
 bun-transpile = { workspace = true }

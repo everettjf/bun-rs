@@ -8,17 +8,22 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use bun_jsc::{Callback, Context, Value};
 use bun_jsc_sys as sys;
 use bun_loader::Resolver;
+
+use crate::timers::run_one_tick;
 
 thread_local! {
     static CACHE: RefCell<HashMap<PathBuf, sys::JSValueRef>> = RefCell::new(HashMap::new());
     static RESOLVER: Resolver = Resolver::new();
 }
 
-/// Bind `globalThis.__bun_require(spec, importerPath)` to the Rust loader.
+/// Bind `globalThis.__bun_require(spec, importerPath)` to the Rust loader,
+/// and install a JS helper that chains the module body promise to resolve
+/// with the module's `__exports`.
 pub fn install_module_loader(ctx: &Context) {
     let cb = Callback::new(ctx, "__bun_require", |args| {
         if args.len() < 1 {
@@ -41,16 +46,35 @@ pub fn install_module_loader(ctx: &Context) {
         .set_property("__bun_require", &cb.value_in(ctx))
         .expect("install __bun_require");
     std::mem::forget(cb);
+
+    // Helper used by load_module to map a body Promise to the module's
+    // exports object after the body finishes evaluating. Defined in JS so
+    // `then` chaining is native.
+    ctx.eval(
+        r#"
+        globalThis.__bun_chain_exports = function(bodyPromise, exports) {
+            return bodyPromise.then(() => exports);
+        };
+        "#,
+        Some("[bun-chain-exports]"),
+    )
+    .expect("install __bun_chain_exports");
 }
 
 /// Public entry: load and evaluate `path` as the program's main module.
+///
+/// `load_module` returns a Promise (or, for cache hits, a plain value).
+/// We must drive the event loop until it settles before returning to the CLI,
+/// otherwise top-level `await` and dynamic `import()` wouldn't finish.
 pub fn run_entry(ctx: &Context, path: &Path) -> Result<(), LoaderRuntimeError> {
     let abs = path
         .canonicalize()
         .map_err(|e| LoaderRuntimeError::Io(path.to_path_buf(), e))?;
-    // Reuse the same machinery the JS-side `__bun_require` would.
-    // No importer needed — we already have an absolute path.
-    load_module(ctx, abs.to_str().unwrap_or(""), &abs)?;
+    let result = load_module(ctx, abs.to_str().unwrap_or(""), &abs)?;
+    await_promise(ctx, result).map_err(|e| LoaderRuntimeError::Eval {
+        path: abs.clone(),
+        message: e,
+    })?;
     Ok(())
 }
 
@@ -103,9 +127,11 @@ fn load_module<'ctx>(
     let prepared = bun_loader::prepare(&abs)?;
     let parent = abs.parent().unwrap_or_else(|| Path::new("."));
 
-    // Wrap in IIFE. Use a fresh ident to avoid colliding with module-level vars.
+    // Wrap in an async function. The body uses `await __bun_require(...)`
+    // for static imports, and bare `__bun_require(...)` is itself a thenable
+    // call so `import()` (rewritten to `__bun_require()`) works too.
     let wrapped = format!(
-        "(function (__exports, __bun_require, __filename, __dirname) {{\n{}\n}})",
+        "(async function (__exports, __bun_require, __filename, __dirname) {{\n{}\n}})",
         prepared.rewritten
     );
 
@@ -135,14 +161,125 @@ fn load_module<'ctx>(
     let filename = Value::new_string(ctx, abs.to_str().unwrap_or(""));
     let dirname = Value::new_string(ctx, parent.to_str().unwrap_or(""));
 
-    factory
+    let body_promise = factory
         .call(None, &[exports_val, require_fn, filename, dirname])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),
         })?;
 
-    Ok(exports_val)
+    // Chain `bodyPromise.then(() => exports)` in JS so the caller's
+    // `await __bun_require(...)` sees the exports object only after the body
+    // has finished evaluating. For pure-sync bodies the chain resolves in the
+    // next microtask checkpoint — which `await_promise` (called at entry)
+    // forces via a no-op eval.
+    let chain_fn = ctx
+        .global_object()
+        .get_property("__bun_chain_exports")
+        .and_then(|v| v.to_object())
+        .map_err(|e| LoaderRuntimeError::Eval {
+            path: abs.clone(),
+            message: e.to_string(),
+        })?;
+    let chained = chain_fn
+        .call(None, &[body_promise, exports_val])
+        .map_err(|e| LoaderRuntimeError::Eval {
+            path: abs.clone(),
+            message: e.to_string(),
+        })?;
+
+    Ok(chained)
+}
+
+/// Wait for a JS Promise to settle, driving the event loop in the meantime.
+///
+/// Strategy:
+///   - Attach `.then(resolveCb, rejectCb)` to the promise, where the
+///     callbacks store the outcome in a thread-local-shared `Rc<RefCell<…>>`.
+///   - Spin: while outcome is `None`, fire timers (existing event loop).
+///   - On resolve, return the resolved value. On reject, return its string.
+///
+/// Microtasks drain naturally between JS calls, so a promise resolved by
+/// pure JS work settles before the loop even starts iterating.
+pub fn await_promise<'ctx>(
+    ctx: &'ctx Context,
+    promise: Value<'ctx>,
+) -> Result<Value<'ctx>, String> {
+    // Fast path: the value isn't a Promise (or any thenable). Just return it.
+    if !promise.is_object() {
+        return Ok(promise);
+    }
+    let promise_obj = promise.to_object().map_err(|e| e.to_string())?;
+    let then_val = match promise_obj.get_property("then") {
+        Ok(v) => v,
+        Err(_) => return Ok(promise),
+    };
+    if !then_val.is_object() {
+        return Ok(promise);
+    }
+    let then_obj = then_val.to_object().map_err(|e| e.to_string())?;
+    if !then_obj.is_function() {
+        return Ok(promise);
+    }
+
+    #[derive(Clone)]
+    enum Outcome {
+        Resolved(sys::JSValueRef),
+        Rejected(String),
+    }
+    let outcome: Rc<RefCell<Option<Outcome>>> = Rc::new(RefCell::new(None));
+
+    let resolve_clone = outcome.clone();
+    let resolve_cb = Callback::new(ctx, "__bun_resolve", move |args| {
+        let v = args.get(0);
+        unsafe { sys::JSValueProtect(v.context().as_raw(), v.as_raw()) };
+        *resolve_clone.borrow_mut() = Some(Outcome::Resolved(v.as_raw()));
+        Ok(Value::new_undefined(args.context()))
+    });
+
+    let reject_clone = outcome.clone();
+    let reject_cb = Callback::new(ctx, "__bun_reject", move |args| {
+        let s = args.get(0).to_string();
+        *reject_clone.borrow_mut() = Some(Outcome::Rejected(s));
+        Ok(Value::new_undefined(args.context()))
+    });
+
+    then_obj
+        .call(
+            Some(promise_obj),
+            &[resolve_cb.value_in(ctx), reject_cb.value_in(ctx)],
+        )
+        .map_err(|e| e.to_string())?;
+
+    // The callbacks now live on the promise's reaction chain. JSC keeps
+    // them alive; we leak our wrappers.
+    std::mem::forget(resolve_cb);
+    std::mem::forget(reject_cb);
+
+    while outcome.borrow().is_none() {
+        // Nudge microtask drain: a no-op script forces JSC to flush its
+        // queue. Cheap and reliable.
+        let _ = ctx.eval("undefined", Some("[microtask-drain]"));
+        if outcome.borrow().is_some() {
+            break;
+        }
+        if !run_one_tick(ctx) {
+            return Err("event loop deadlocked: promise pending with no work to do".to_string());
+        }
+    }
+
+    let taken = outcome.borrow_mut().take().unwrap();
+    match taken {
+        Outcome::Resolved(raw) => {
+            // We protected on capture; caller doesn't need to keep us alive.
+            // Leave the protect in place — the caller's Value lifetime is the
+            // borrow of `ctx`, and any cache insertion has already happened
+            // in load_module before we got here. For the entry, the resolved
+            // value is `undefined`; ditto for pure side-effect modules.
+            Ok(unsafe { Value::from_raw_public(ctx, raw) })
+        }
+        Outcome::Rejected(s) => Err(s),
+    }
 }
 
 // We need a way to make a Value<'ctx> out of a raw pointer. `Value::from_raw`
