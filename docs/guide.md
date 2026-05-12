@@ -105,7 +105,7 @@ in — pass concatenated strings if you need that.
 | `Blob`, `File`, `FormData` | ❌ | |
 | `WebSocket` | ❌ | |
 | `AbortController` / `AbortSignal` | ❌ | |
-| `ReadableStream` / `WritableStream` / `TransformStream` | ❌ | |
+| `ReadableStream` / `WritableStream` / `TransformStream` | 🟡 | Spec subset: default reader/writer, `pipeTo` / `pipeThrough` / `tee`, `ReadableStream.from(iter)`, async-iteration. **No** BYOB readers, no byte streams (`ReadableByteStreamController`). `Response.body` is a stream. |
 | `crypto.subtle` | ❌ | Use `node:crypto` instead |
 | `performance.now()` | ❌ | Use `Date.now()` or `process.hrtime()` |
 

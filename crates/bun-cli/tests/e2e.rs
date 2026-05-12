@@ -851,6 +851,94 @@ fn writefile_accepts_buffer() {
 }
 
 #[test]
+fn readable_stream_from_iterable_and_for_await() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            (async () => {
+                const rs = ReadableStream.from([1, 2, 3]);
+                const out = [];
+                for await (const v of rs) out.push(v);
+                console.log(out.join(","));
+            })()
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "1,2,3");
+}
+
+#[test]
+fn transform_stream_uppercase_pipeline() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            (async () => {
+                const upper = new TransformStream({
+                    transform(c, ctrl) { ctrl.enqueue(String(c).toUpperCase()); },
+                });
+                const collected = [];
+                await ReadableStream.from(["hi", "bun-rs"])
+                    .pipeThrough(upper)
+                    .pipeTo(new WritableStream({ write(c) { collected.push(c); } }));
+                console.log(collected.join(" "));
+            })()
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "HI BUN-RS");
+}
+
+#[test]
+fn response_body_is_a_stream() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            (async () => {
+                const r = new Response("ok");
+                if (!(r.body instanceof ReadableStream)) throw new Error("not a stream");
+                const chunks = [];
+                for await (const c of r.body) chunks.push(c);
+                const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+                console.log("len:", total);
+            })()
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "len: 2");
+}
+
+#[test]
+fn writable_stream_collect_and_close() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            (async () => {
+                const sunk = [];
+                const ws = new WritableStream({ write(c) { sunk.push(c); } });
+                const w = ws.getWriter();
+                await w.write("a"); await w.write("b"); await w.write("c");
+                await w.close();
+                console.log(sunk.join(""));
+            })()
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "abc");
+}
+
+#[test]
 fn error_stack_maps_to_source_lines() {
     // Throw on a known line and confirm the stack frame names that line,
     // not the rewritten/wrapped script line.

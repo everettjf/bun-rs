@@ -233,8 +233,16 @@
   class Response {
     constructor(body, init) {
       init = init || {};
+      // If body is itself a ReadableStream, consume it lazily on demand.
+      const isStream = body && typeof body === "object" && typeof body.getReader === "function";
       const bytes = body instanceof Uint8Array ? body : init._bytes || null;
-      Object.assign(this, makeBody(body, bytes));
+      if (isStream) {
+        // Drain the stream lazily to build text/bytes on demand.
+        Object.assign(this, makeBody("", null));
+        this._sourceStream = body;
+      } else {
+        Object.assign(this, makeBody(body, bytes));
+      }
       this.status = init.status != null ? init.status : 200;
       this.statusText = init.statusText || "";
       this.headers = new Headers(init.headers || {});
@@ -242,6 +250,23 @@
       this.ok = this.status >= 200 && this.status < 300;
       this.redirected = false;
       this.type = "default";
+    }
+    get body() {
+      if (this._sourceStream) return this._sourceStream;
+      if (this._streamBody) return this._streamBody;
+      // Wrap the existing string/bytes body in a one-shot ReadableStream.
+      const bytes = this._bodyBytes || (this._body ? new TextEncoder().encode(this._body) : new Uint8Array(0));
+      let yielded = false;
+      this._streamBody = new ReadableStream({
+        pull(controller) {
+          if (!yielded) {
+            yielded = true;
+            if (bytes.byteLength > 0) controller.enqueue(bytes);
+          }
+          controller.close();
+        },
+      });
+      return this._streamBody;
     }
     static json(data, init) {
       const body = JSON.stringify(data);

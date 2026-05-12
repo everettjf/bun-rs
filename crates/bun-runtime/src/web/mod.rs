@@ -13,6 +13,11 @@ pub fn install_web(ctx: &Context) {
     url_parse::install(ctx);
     fetch::install(ctx);
 
+    // Streams first — the body polyfill below references ReadableStream
+    // when wrapping fetch response bodies.
+    ctx.eval(STREAMS, Some("[bun-streams-polyfill]"))
+        .expect("install streams polyfill");
+
     // The polyfill (URL / URLSearchParams / Headers / Request / Response /
     // fetch wrapper). Keeping it in one big eval block makes initialization
     // trivial and predictable.
@@ -21,6 +26,7 @@ pub fn install_web(ctx: &Context) {
 }
 
 const POLYFILL: &str = include_str!("polyfill.js");
+const STREAMS: &str = include_str!("streams.js");
 
 #[allow(dead_code)]
 fn bind<F>(ctx: &Context, name: &str, f: F)
