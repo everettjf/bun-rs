@@ -3,6 +3,48 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [0.2.0] – 2026-05-12
+
+The theme: streams, concurrency, better error reporting.
+
+### Added
+
+- **Web Streams**: `ReadableStream`, `WritableStream`, `TransformStream`,
+  default readers/writers, `pipeTo` / `pipeThrough` / `tee`,
+  `ReadableStream.from(iter)` (sync + async), `Symbol.asyncIterator` for
+  `for await (const chunk of stream)`. `Response.body` is now a real
+  ReadableStream.
+- **`node:stream`** — `Readable` / `Writable` / `Duplex` / `PassThrough`
+  / `Transform` (alias) as EventEmitter subclasses; auto-flow on
+  `'data'` listener; `pipeline()` + `finished()`; Web Streams interop
+  via `Readable.toWeb` / `Readable.fromWeb`.
+- **`fs.createReadStream(path)`** — streams a file in `highWaterMark`-
+  sized chunks (default 64KB) via tokio `spawn_blocking`.
+- **`fs.createWriteStream(path)`** — Writable backed by `std::fs::File`.
+- **`AbortController` / `AbortSignal`** — full set including
+  `AbortSignal.abort` / `.timeout(ms)` / `.any([…])` / `throwIfAborted`.
+  Note: `fetch` does not yet observe the `signal`.
+- **Concurrent `Bun.serve`** — backed by hyper instead of tiny_http. Each
+  request runs in its own tokio task; a slow handler no longer blocks
+  acceptance of new connections. Verified: 5 × 100ms requests now
+  finish in ~250ms (was ~500ms+ on 0.1).
+- **Sourcemap-aware error stacks** — throw at `bad.ts:4` now reports
+  `bad.ts:4` rather than the rewriter line. Synthetic frames
+  (generated import shims) are tagged `<bunrs-internal>`. Column info
+  dropped; JSX-heavy files may drift slightly.
+
+### Changed
+
+- The event loop now drains async-runtime tasks (`fetch`, `fs.promises`,
+  pending Bun.serve responses) alongside timers — the runtime no longer
+  deadlocks awaiting a pending Promise while concurrent I/O is in flight.
+
+### Known still-missing
+- `fetch` doesn't observe `AbortSignal` yet.
+- HTTPS, HTTP/2, WebSocket.
+- `bun install` / `bun build` / `bun test`.
+- Live ESM bindings.
+
 ## [0.1.0] – 2026-05-12
 
 The first public release. A small but credibly working JavaScript / TypeScript

@@ -305,4 +305,98 @@
       _bytes: raw.bytes,
     });
   };
+  // ─────────────────────── AbortController ──────────────────────
+  class AbortSignal {
+    constructor() {
+      this.aborted = false;
+      this.reason = undefined;
+      this._listeners = { abort: [] };
+    }
+    addEventListener(type, fn) {
+      if (type !== "abort") return;
+      if (this.aborted) {
+        try { fn({ type: "abort", target: this }); } catch {}
+        return;
+      }
+      this._listeners.abort.push(fn);
+    }
+    removeEventListener(type, fn) {
+      if (type !== "abort") return;
+      const i = this._listeners.abort.indexOf(fn);
+      if (i !== -1) this._listeners.abort.splice(i, 1);
+    }
+    dispatchEvent(event) {
+      if (event.type !== "abort") return false;
+      for (const fn of this._listeners.abort.slice()) {
+        try { fn(event); } catch (e) { console.error(e); }
+      }
+      if (typeof this.onabort === "function") {
+        try { this.onabort(event); } catch (e) { console.error(e); }
+      }
+      return true;
+    }
+    throwIfAborted() {
+      if (this.aborted) throw this.reason || new Error("Aborted");
+    }
+    static abort(reason) {
+      const s = new AbortSignal();
+      s.aborted = true;
+      s.reason = reason !== undefined ? reason : new DOMException_("AbortError", "AbortError");
+      return s;
+    }
+    static timeout(ms) {
+      const s = new AbortSignal();
+      setTimeout(() => {
+        if (!s.aborted) {
+          s.aborted = true;
+          s.reason = new DOMException_("TimeoutError", "TimeoutError");
+          s.dispatchEvent({ type: "abort", target: s });
+        }
+      }, ms);
+      return s;
+    }
+    static any(signals) {
+      const s = new AbortSignal();
+      for (const sig of signals) {
+        if (sig.aborted) {
+          s.aborted = true;
+          s.reason = sig.reason;
+          return s;
+        }
+      }
+      for (const sig of signals) {
+        sig.addEventListener("abort", () => {
+          if (!s.aborted) {
+            s.aborted = true;
+            s.reason = sig.reason;
+            s.dispatchEvent({ type: "abort", target: s });
+          }
+        });
+      }
+      return s;
+    }
+  }
+  // Lightweight DOMException stub.
+  class DOMException_ extends Error {
+    constructor(message, name) {
+      super(message);
+      this.name = name || "Error";
+    }
+  }
+  if (typeof g.DOMException === "undefined") g.DOMException = DOMException_;
+
+  class AbortController {
+    constructor() {
+      this.signal = new AbortSignal();
+    }
+    abort(reason) {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      this.signal.reason = reason !== undefined ? reason : new g.DOMException("AbortError", "AbortError");
+      this.signal.dispatchEvent({ type: "abort", target: this.signal });
+    }
+  }
+  g.AbortController = AbortController;
+  g.AbortSignal = AbortSignal;
+
 })(globalThis);

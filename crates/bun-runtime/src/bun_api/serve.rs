@@ -1,89 +1,73 @@
-//! `Bun.serve({port, fetch})` — minimal HTTP server.
+//! `Bun.serve({ port, fetch })` — hyper-backed, concurrent.
 //!
 //! Architecture:
-//!   - tiny_http listens on a background thread; each request is wrapped in
-//!     a `PendingRequest` and pushed onto a thread-local queue (the JS
-//!     thread is the only consumer, so a single-producer/single-consumer
-//!     channel suffices).
-//!   - After the entry module's promise settles, the runtime drains the
-//!     queue: each request is marshalled into a JS `Request`, the user's
-//!     `fetch` handler is invoked, the resulting `Response` is awaited
-//!     synchronously (await_promise), and the response is shipped back via
-//!     `tiny_http::Request::respond`.
+//!   - tokio task: accept loop on a TcpListener.
+//!   - per-connection task: hyper `serve_connection`, which dispatches
+//!     each request to a hyper service.
+//!   - the service builds a `RequestInfo`, allocates a respond-id,
+//!     posts a JS task to the JS thread that:
+//!         1. constructs `new Request(...)`,
+//!         2. calls the user's `fetch(req)`,
+//!         3. attaches `.then(resp => __bun_serve_respond(id, resp))`.
+//!   - the service awaits a tokio oneshot Receiver corresponding to that
+//!     id and writes the response back to the wire.
 //!
-//! Limitations (deliberate):
-//!   - No HTTPS, HTTP/2, websocket upgrade, or streaming bodies.
-//!   - `server.stop()` works but `server.reload()` is a no-op.
-//!   - Bodies are read fully into memory before the handler runs.
-//!   - One-request-at-a-time; long-running handlers block other requests.
+//! This means handlers run on the JS thread (serialized at the call point)
+//! but their responses are awaited concurrently — a slow `await fetch(...)`
+//! inside one handler doesn't stall acceptance of new requests.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bun_jsc::{Callback, Context, Value};
+use bun_jsc_sys as sys;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::service::service_fn;
+use hyper::{Request as HyperRequest, Response as HyperResponse, StatusCode};
 
-use crate::modules::await_promise;
+/// Map from respond-id → tokio oneshot Sender. Hyper service tasks consume
+/// these by awaiting their Receiver.
+static RESPONDERS: std::sync::OnceLock<
+    Mutex<HashMap<u64, tokio::sync::oneshot::Sender<HandlerResult>>>,
+> = std::sync::OnceLock::new();
 
-/// One pending HTTP request, plus a slot the JS thread fills with the
-/// response that the server thread will write back.
-pub struct PendingRequest {
-    pub method: String,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-    pub respond: Box<dyn FnOnce(u16, Vec<(String, String)>, Vec<u8>) + Send>,
+fn responders() -> &'static Mutex<HashMap<u64, tokio::sync::oneshot::Sender<HandlerResult>>> {
+    RESPONDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+static NEXT_RESPOND_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+struct HandlerResult {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+/// Live servers — used by the event loop to decide whether to stay running.
 struct ServerState {
-    handler: sys_protect::ProtectedValue,
-    pending: Receiver<PendingRequest>,
+    handler_raw: usize,
     stop_flag: Arc<AtomicBool>,
-    port: u16,
+    ctx_raw: sys::JSGlobalContextRef,
 }
 
-mod sys_protect {
-    use bun_jsc_sys as sys;
-
-    /// A JS callback ref kept alive across the FFI boundary. `JSValueProtect`
-    /// on creation; `JSValueUnprotect` on drop.
-    pub struct ProtectedValue {
-        pub raw: sys::JSValueRef,
-        pub ctx: sys::JSGlobalContextRef,
-    }
-
-    impl ProtectedValue {
-        pub fn new(ctx: sys::JSContextRef, raw: sys::JSValueRef) -> Self {
-            unsafe {
-                sys::JSValueProtect(ctx, raw);
-                let g = sys::JSGlobalContextRetain(ctx as sys::JSGlobalContextRef);
-                Self { raw, ctx: g }
-            }
-        }
-    }
-    impl Drop for ProtectedValue {
-        fn drop(&mut self) {
-            unsafe {
-                sys::JSValueUnprotect(self.ctx as sys::JSContextRef, self.raw);
-                sys::JSGlobalContextRelease(self.ctx);
-            }
-        }
-    }
-}
-
-// Thread-local list of running servers, drained by the event loop.
 thread_local! {
     static SERVERS: std::cell::RefCell<Vec<ServerState>> = std::cell::RefCell::new(Vec::new());
 }
 
 pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
+    // Install the response-write callbacks once (idempotent via property check).
+    install_response_callbacks(ctx);
+
     super::bind(ctx, bun, "serve", |args| {
         let opts = args.get(0);
         if !opts.is_object() {
-            return Err("Bun.serve requires an options object".to_string());
+            return Err("Bun.serve requires an options object".into());
         }
         let opts_obj = opts.to_object().map_err(|e| e.to_string())?;
-
         let port = opts_obj
             .get_property("port")
             .map(|v| v.to_number() as u16)
@@ -91,103 +75,81 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let handler_val = opts_obj
             .get_property("fetch")
             .map_err(|e| e.to_string())?;
-        if !handler_val.is_object() {
-            return Err("Bun.serve: `fetch` must be a function".to_string());
-        }
         let handler_obj = handler_val.to_object().map_err(|e| e.to_string())?;
         if !handler_obj.is_function() {
-            return Err("Bun.serve: `fetch` must be a function".to_string());
+            return Err("Bun.serve: `fetch` must be a function".into());
         }
 
-        // Spin up tiny_http on a worker thread; messages travel back through
-        // a channel that the JS thread will drain in its event loop.
-        let addr = format!("0.0.0.0:{port}");
-        let server = match tiny_http::Server::http(&addr) {
-            Ok(s) => s,
-            Err(e) => return Err(format!("Bun.serve: bind {addr} failed: {e}")),
-        };
-        let resolved_port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(port);
+        // Protect the handler so we can hand it to the per-request JS tasks.
+        unsafe {
+            sys::JSValueProtect(args.context().as_raw(), handler_obj.as_raw() as sys::JSValueRef);
+        }
+        let handler_raw = handler_obj.as_raw() as usize;
         let stop_flag = Arc::new(AtomicBool::new(false));
 
-        let (tx, rx): (Sender<PendingRequest>, Receiver<PendingRequest>) = channel();
-        let stop_for_thread = stop_flag.clone();
+        // Bind synchronously on the JS thread so we can return the resolved
+        // port immediately AND avoid a race between "Bun.serve returned" and
+        // "tokio actually listening". We hand the std listener to tokio.
+        let std_listener = match std::net::TcpListener::bind(("0.0.0.0", port)) {
+            Ok(l) => l,
+            Err(e) => return Err(format!("Bun.serve: bind port {port} failed: {e}")),
+        };
+        let resolved_port = std_listener
+            .local_addr()
+            .map(|a| a.port())
+            .unwrap_or(port);
+        std_listener
+            .set_nonblocking(true)
+            .expect("set_nonblocking");
 
-        // Wrap tiny_http::Request in a Box<dyn FnOnce(...)> so the JS thread
-        // can respond. tiny_http's Request isn't Send-friendly because its
-        // body reader holds a reference into the connection; we wrap with
-        // a sync Mutex and move the request through.
-        std::thread::spawn(move || {
-            let server = Arc::new(server);
-            for req in server.incoming_requests() {
-                if stop_for_thread.load(Ordering::SeqCst) {
-                    break;
+        // Spawn the accept loop on tokio.
+        let stop_clone = stop_flag.clone();
+        crate::async_rt::spawn(async move {
+            let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("Bun.serve: from_std failed: {e}");
+                    return;
                 }
-                let method = req.method().as_str().to_uppercase();
-                let url = format!("http://localhost:{resolved_port}{}", req.url());
-                let headers = req
-                    .headers()
-                    .iter()
-                    .map(|h| (h.field.as_str().to_string(), h.value.as_str().to_string()))
-                    .collect::<Vec<_>>();
-
-                // tiny_http::Request is !Send because of the body reader, but
-                // we own it here. Use a Mutex<Option<_>> as a hand-off slot.
-                let req_slot: Arc<Mutex<Option<tiny_http::Request>>> = Arc::new(Mutex::new(None));
-                let mut req = req;
-                // Drain body before crossing thread boundary.
-                let mut body = Vec::new();
-                use std::io::Read;
-                let _ = req.as_reader().read_to_end(&mut body);
-                *req_slot.lock().unwrap() = Some(req);
-                let req_slot_for_respond = req_slot.clone();
-
-                let respond: Box<dyn FnOnce(u16, Vec<(String, String)>, Vec<u8>) + Send> =
-                    Box::new(move |status, hdrs, body| {
-                        let mut g = req_slot_for_respond.lock().unwrap();
-                        let req = match g.take() {
-                            Some(r) => r,
-                            None => return,
+            };
+            loop {
+                if stop_clone.load(Ordering::SeqCst) { break; }
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        let (stream, _addr) = match accepted {
+                            Ok(p) => p,
+                            Err(_) => continue,
                         };
-                        drop(g);
-                        let mut resp = tiny_http::Response::from_data(body)
-                            .with_status_code(status as i32);
-                        for (k, v) in hdrs {
-                            if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-                                resp = resp.with_header(h);
-                            }
-                        }
-                        let _ = req.respond(resp);
-                    });
-
-                if tx
-                    .send(PendingRequest {
-                        method,
-                        url,
-                        headers,
-                        body,
-                        respond,
-                    })
-                    .is_err()
-                {
-                    break;
+                        let io = hyper_util::rt::TokioIo::new(stream);
+                        let stop = stop_clone.clone();
+                        tokio::spawn(async move {
+                            let svc = service_fn(move |req| {
+                                let _ = &stop;
+                                handle_request(handler_raw, req)
+                            });
+                            let _ = hyper::server::conn::http1::Builder::new()
+                                .serve_connection(io, svc)
+                                .await;
+                        });
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                        // Periodic wake to check stop_flag.
+                    }
                 }
             }
         });
 
-        // Save server state on the JS thread.
+        // Register on the JS thread so the event loop stays alive.
+        let ctx_raw = args.context().as_global_raw();
         SERVERS.with(|s| {
             s.borrow_mut().push(ServerState {
-                handler: sys_protect::ProtectedValue::new(
-                    args.context().as_raw(),
-                    handler_obj.as_raw() as bun_jsc_sys::JSValueRef,
-                ),
-                pending: rx,
+                handler_raw,
                 stop_flag: stop_flag.clone(),
-                port: resolved_port,
+                ctx_raw,
             });
         });
 
-        // Return a Server-like object: { port, hostname, stop, url }.
+        // Return a Server-like object.
         let ctx = args.context();
         let v = ctx.eval("({})", Some("[Bun.serve]")).unwrap();
         let obj = v.to_object().unwrap();
@@ -200,15 +162,14 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             &Value::new_string(ctx, &format!("http://localhost:{resolved_port}/")),
         )
         .unwrap();
-        let stop_flag_for_stop = stop_flag.clone();
+        let stop_clone2 = stop_flag.clone();
         let stop_cb = Callback::new(ctx, "stop", move |args| {
-            stop_flag_for_stop.store(true, Ordering::SeqCst);
-            // Best-effort: punch a tiny connection through so tiny_http
-            // wakes from incoming_requests().
-            let port_str = std::env::var("BUN_RS_STOP_PORT").unwrap_or_default();
-            if !port_str.is_empty() {
-                let _ = std::net::TcpStream::connect(format!("127.0.0.1:{port_str}"));
-            }
+            stop_clone2.store(true, Ordering::SeqCst);
+            // Best-effort wake: connect to our own port so accept() unblocks.
+            let _ = std::net::TcpStream::connect_timeout(
+                &format!("127.0.0.1:{resolved_port}").parse().unwrap(),
+                std::time::Duration::from_millis(50),
+            );
             Ok(Value::new_undefined(args.context()))
         });
         obj.set_property("stop", &stop_cb.value_in(ctx)).unwrap();
@@ -218,8 +179,247 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
     });
 }
 
-/// Are there any live servers? Used by the event loop to decide whether to
-/// keep blocking.
+async fn handle_request(
+    handler_raw: usize,
+    req: HyperRequest<hyper::body::Incoming>,
+) -> Result<HyperResponse<Full<Bytes>>, Infallible> {
+    let method = req.method().as_str().to_string();
+    let uri = req.uri().clone();
+    let url = format!("http://localhost{}", uri.path_and_query().map(|p| p.as_str()).unwrap_or(""));
+    let headers: Vec<(String, String)> = req
+        .headers()
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str().ok().map(|s| (k.as_str().to_string(), s.to_string()))
+        })
+        .collect();
+    let body_bytes = match req.collect().await {
+        Ok(c) => c.to_bytes().to_vec(),
+        Err(_) => Vec::new(),
+    };
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<HandlerResult>();
+    let respond_id = NEXT_RESPOND_ID.fetch_add(1, Ordering::SeqCst);
+    responders().lock().unwrap().insert(respond_id, tx);
+
+    crate::async_rt::post_to_js(move |ctx| {
+        let handler_v = unsafe {
+            Value::from_raw_public(ctx, handler_raw as sys::JSValueRef)
+        };
+        let handler_obj = match handler_v.to_object() {
+            Ok(o) => o,
+            Err(_) => {
+                resolve_error(respond_id, "handler invalid");
+                return;
+            }
+        };
+
+        let req_obj = match build_js_request(ctx, &method, &url, &headers, &body_bytes) {
+            Ok(v) => v,
+            Err(msg) => {
+                resolve_error(respond_id, &msg);
+                return;
+            }
+        };
+
+        // Call handler(request). Result may be a Response or a Promise<Response>.
+        let result = match handler_obj.call(None, &[req_obj]) {
+            Ok(v) => v,
+            Err(e) => {
+                resolve_error(respond_id, &e.to_string());
+                return;
+            }
+        };
+
+        // Wrap with Promise.resolve so we always have a thenable.
+        let wrap = ctx
+            .eval(
+                "((p, id) => Promise.resolve(p).then(r => globalThis.__bun_serve_respond(id, r), e => globalThis.__bun_serve_respond_error(id, e)))",
+                Some("[serve-wrap]"),
+            )
+            .ok()
+            .and_then(|v| v.to_object().ok());
+        if let Some(wrap) = wrap {
+            let _ = wrap.call(None, &[result, Value::new_number(ctx, respond_id as f64)]);
+        }
+    });
+
+    let result = match rx.await {
+        Ok(r) => r,
+        Err(_) => HandlerResult {
+            status: 500,
+            headers: vec![],
+            body: b"Bun.serve: handler dropped".to_vec(),
+        },
+    };
+
+    let mut builder = HyperResponse::builder().status(StatusCode::from_u16(result.status).unwrap_or(StatusCode::OK));
+    for (k, v) in &result.headers {
+        builder = builder.header(k, v);
+    }
+    let body = Full::new(Bytes::from(result.body));
+    Ok(builder.body(body).unwrap_or_else(|_| {
+        HyperResponse::new(Full::new(Bytes::from_static(b"")))
+    }))
+}
+
+fn resolve_error(id: u64, msg: &str) {
+    let tx = responders().lock().unwrap().remove(&id);
+    if let Some(tx) = tx {
+        let _ = tx.send(HandlerResult {
+            status: 500,
+            headers: vec![],
+            body: msg.as_bytes().to_vec(),
+        });
+    }
+}
+
+fn build_js_request<'ctx>(
+    ctx: &'ctx Context,
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Result<Value<'ctx>, String> {
+    let request_ctor = ctx
+        .global_object()
+        .get_property("Request")
+        .and_then(|v| v.to_object())
+        .map_err(|e| e.to_string())?;
+    let init_v = ctx.eval("({})", Some("[serve-init]")).unwrap();
+    let init = init_v.to_object().map_err(|e| e.to_string())?;
+    init.set_property("method", &Value::new_string(ctx, method))
+        .map_err(|e| e.to_string())?;
+    if !body.is_empty() {
+        // Pass as Uint8Array (zero-copy) so binary bodies survive intact.
+        let bytes = body.to_vec();
+        init.set_property("body", &Value::new_uint8_array(ctx, bytes))
+            .map_err(|e| e.to_string())?;
+    }
+    let h_v = ctx.eval("({})", Some("[serve-req-headers]")).unwrap();
+    let h = h_v.to_object().map_err(|e| e.to_string())?;
+    for (k, v) in headers {
+        let _ = h.set_property(k, &Value::new_string(ctx, v));
+    }
+    init.set_property("headers", &h_v).map_err(|e| e.to_string())?;
+    let url_v = Value::new_string(ctx, url);
+    request_ctor
+        .construct(&[url_v, init_v])
+        .map_err(|e| e.to_string())
+}
+
+fn install_response_callbacks(ctx: &Context) {
+    // Idempotent: skip if already installed.
+    if ctx
+        .global_object()
+        .get_property("__bun_serve_respond")
+        .map(|v| !v.is_undefined())
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    let respond_cb = Callback::new(ctx, "__bun_serve_respond", |args| {
+        let id = args.get(0).to_number() as u64;
+        let response_v = args.get(1);
+        let response_obj = match response_v.to_object() {
+            Ok(o) => o,
+            Err(_) => {
+                resolve_error(id, "Bun.serve: handler returned a non-Response value");
+                return Ok(Value::new_undefined(args.context()));
+            }
+        };
+
+        // Pull status + body + headers off the Response (polyfill stores
+        // body as _body / _bodyBytes, headers as a Headers wrapping a Map).
+        let status = response_obj
+            .get_property("status")
+            .map(|v| v.to_number() as u16)
+            .unwrap_or(200);
+        let body_bytes: Vec<u8> = response_obj
+            .get_property("_bodyBytes")
+            .ok()
+            .and_then(|v| {
+                if v.is_object() {
+                    v.typed_array_bytes().map(|b| b.to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                response_obj
+                    .get_property("_body")
+                    .map(|v| v.to_string().into_bytes())
+                    .unwrap_or_default()
+            });
+        let mut headers: Vec<(String, String)> = Vec::new();
+        if let Ok(h) = response_obj.get_property("headers") {
+            if h.is_object() {
+                let extract = args
+                    .context()
+                    .eval(
+                        "(h) => { const out = []; for (const [k,v] of h) out.push([k, v]); return out; }",
+                        Some("[serve-headers]"),
+                    )
+                    .ok()
+                    .and_then(|v| v.to_object().ok());
+                if let Some(extract) = extract {
+                    if let Ok(arr) = extract.call(None, &[h]) {
+                        if let Ok(arr_obj) = arr.to_object() {
+                            let len = arr_obj
+                                .get_property("length")
+                                .map(|v| v.to_number() as u32)
+                                .unwrap_or(0);
+                            for i in 0..len {
+                                if let Ok(entry) = arr_obj.get_property_at(i) {
+                                    if let Ok(eo) = entry.to_object() {
+                                        let k = eo
+                                            .get_property_at(0)
+                                            .map(|v| v.to_string())
+                                            .unwrap_or_default();
+                                        let v = eo
+                                            .get_property_at(1)
+                                            .map(|v| v.to_string())
+                                            .unwrap_or_default();
+                                        headers.push((k, v));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let tx = responders().lock().unwrap().remove(&id);
+        if let Some(tx) = tx {
+            let _ = tx.send(HandlerResult {
+                status,
+                headers,
+                body: body_bytes,
+            });
+        }
+        Ok(Value::new_undefined(args.context()))
+    });
+    ctx.global_object()
+        .set_property("__bun_serve_respond", &respond_cb.value_in(ctx))
+        .unwrap();
+    std::mem::forget(respond_cb);
+
+    let err_cb = Callback::new(ctx, "__bun_serve_respond_error", |args| {
+        let id = args.get(0).to_number() as u64;
+        let err = args.get(1);
+        let msg = err.to_string();
+        resolve_error(id, &msg);
+        Ok(Value::new_undefined(args.context()))
+    });
+    ctx.global_object()
+        .set_property("__bun_serve_respond_error", &err_cb.value_in(ctx))
+        .unwrap();
+    std::mem::forget(err_cb);
+}
+
+// ── Event-loop integration ──────────────────────────────────────────
+
 pub fn any_active() -> bool {
     SERVERS.with(|s| {
         s.borrow()
@@ -228,163 +428,8 @@ pub fn any_active() -> bool {
     })
 }
 
-/// Drain one pending request across any server, blocking for up to
-/// `timeout`. Returns `true` if it handled something.
-pub fn poll_one(ctx: &Context, timeout: std::time::Duration) -> bool {
-    // We just probe each receiver in turn. Cheap with few servers.
-    let next = SERVERS.with(|s| {
-        let mut all = s.borrow_mut();
-        // Tidy: drop stopped servers.
-        all.retain(|sv| !sv.stop_flag.load(Ordering::SeqCst));
-        for sv in all.iter() {
-            if let Ok(req) = sv.pending.try_recv() {
-                return Some((req, sv.handler.raw));
-            }
-        }
-        None
-    });
-
-    let (req, handler_raw) = match next {
-        Some(x) => x,
-        None => {
-            std::thread::sleep(timeout.min(std::time::Duration::from_millis(20)));
-            return false;
-        }
-    };
-
-    handle_request(ctx, handler_raw, req);
-    true
-}
-
-fn handle_request(ctx: &Context, handler_raw: bun_jsc_sys::JSValueRef, req: PendingRequest) {
-    // Build a JS Request from the pending data.
-    let request_v = match build_js_request(ctx, &req) {
-        Ok(v) => v,
-        Err(msg) => {
-            (req.respond)(500, vec![], format!("Bun.serve internal error: {msg}").into_bytes());
-            return;
-        }
-    };
-
-    // Call handler(request).
-    let handler_obj = unsafe { bun_jsc::Value::from_raw_public(ctx, handler_raw) };
-    let handler = match handler_obj.to_object() {
-        Ok(o) => o,
-        Err(e) => {
-            (req.respond)(500, vec![], e.to_string().into_bytes());
-            return;
-        }
-    };
-    let result = handler.call(None, &[request_v]);
-    let response_v = match result {
-        Ok(v) => v,
-        Err(e) => {
-            (req.respond)(500, vec![], e.to_string().into_bytes());
-            return;
-        }
-    };
-
-    // If handler returned a promise, await it.
-    let response_v = match await_promise(ctx, response_v) {
-        Ok(v) => v,
-        Err(e) => {
-            (req.respond)(500, vec![], e.into_bytes());
-            return;
-        }
-    };
-
-    // Pull fields off the JS Response.
-    let resp_obj = match response_v.to_object() {
-        Ok(o) => o,
-        Err(e) => {
-            (req.respond)(500, vec![], e.to_string().into_bytes());
-            return;
-        }
-    };
-    let status = resp_obj
-        .get_property("status")
-        .map(|v| v.to_number() as u16)
-        .unwrap_or(200);
-    let body_str = resp_obj
-        .get_property("_body")
-        .map(|v| v.to_string())
-        .unwrap_or_default();
-    let mut headers: Vec<(String, String)> = Vec::new();
-    if let Ok(h) = resp_obj.get_property("headers") {
-        if h.is_object() {
-            // Headers polyfill stores entries on `_map` (a JS Map). We use the
-            // public iteration via Map.prototype.entries through a helper.
-            let extract = ctx
-                .eval(
-                    "(h) => { const out = []; for (const [k,v] of h) out.push([k, v]); return out; }",
-                    Some("[serve-headers]"),
-                )
-                .unwrap()
-                .to_object()
-                .ok();
-            if let Some(extract) = extract {
-                if let Ok(arr) = extract.call(None, &[h]) {
-                    if let Ok(arr_obj) = arr.to_object() {
-                        let len = arr_obj
-                            .get_property("length")
-                            .map(|v| v.to_number() as u32)
-                            .unwrap_or(0);
-                        for i in 0..len {
-                            if let Ok(entry) = arr_obj.get_property_at(i) {
-                                if let Ok(eo) = entry.to_object() {
-                                    let k = eo
-                                        .get_property_at(0)
-                                        .map(|v| v.to_string())
-                                        .unwrap_or_default();
-                                    let v = eo
-                                        .get_property_at(1)
-                                        .map(|v| v.to_string())
-                                        .unwrap_or_default();
-                                    headers.push((k, v));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    (req.respond)(status, headers, body_str.into_bytes());
-}
-
-fn build_js_request<'ctx>(
-    ctx: &'ctx Context,
-    req: &PendingRequest,
-) -> Result<Value<'ctx>, String> {
-    // Use the Request polyfill installed by web::install_web.
-    let global = ctx.global_object();
-    let request_ctor = global
-        .get_property("Request")
-        .map_err(|e| e.to_string())?
-        .to_object()
-        .map_err(|e| e.to_string())?;
-
-    let init_v = ctx.eval("({})", Some("[serve-init]")).unwrap();
-    let init = init_v.to_object().map_err(|e| e.to_string())?;
-    init.set_property("method", &Value::new_string(ctx, &req.method))
-        .map_err(|e| e.to_string())?;
-    if !req.body.is_empty() {
-        let body = String::from_utf8_lossy(&req.body).into_owned();
-        init.set_property("body", &Value::new_string(ctx, &body))
-            .map_err(|e| e.to_string())?;
-    }
-
-    let headers_v = ctx.eval("({})", Some("[serve-req-headers]")).unwrap();
-    let headers = headers_v.to_object().map_err(|e| e.to_string())?;
-    for (k, v) in &req.headers {
-        let _ = headers.set_property(k, &Value::new_string(ctx, v));
-    }
-    init.set_property("headers", &headers_v)
-        .map_err(|e| e.to_string())?;
-
-    let url_v = Value::new_string(ctx, &req.url);
-    let req_obj = request_ctor
-        .construct(&[url_v, init_v])
-        .map_err(|e| e.to_string())?;
-    Ok(req_obj)
+/// poll_one is now a no-op — concurrency is managed entirely by tokio.
+/// Kept for API compatibility with the old code path.
+pub fn poll_one(_ctx: &Context, _timeout: std::time::Duration) -> bool {
+    false
 }

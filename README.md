@@ -2,8 +2,8 @@
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** 0.1.0 — runs TypeScript + ESM, has a useful Web / `node:*` /
-`Bun.*` surface, async I/O via tokio. See:
+**Status:** 0.2.0 — runs TypeScript + ESM, streams + concurrent HTTP,
+sourcemap-aware error stacks. See:
 
 - [`docs/tutorial.md`](docs/tutorial.md) — 30-minute walk-through
 - [`docs/guide.md`](docs/guide.md) — full reference: what works, what doesn't
@@ -46,8 +46,10 @@ cargo build --release
 - `queueMicrotask`
 - **`fetch`** — async via tokio + reqwest (rustls); does not block the JS thread
 - **`Buffer`** (Node-compatible, extends Uint8Array, zero-copy from Rust)
+- **`ReadableStream` / `WritableStream` / `TransformStream`** + `pipeTo` / `pipeThrough` / `tee` / `ReadableStream.from`
+- **`AbortController` / `AbortSignal`** (including `.timeout` / `.any`)
 - `URL` / `URLSearchParams` (parsing via Rust `url`)
-- `Headers` / `Request` / `Response`
+- `Headers` / `Request` / `Response` (`Response.body` is a real stream)
 - `TextEncoder` / `TextDecoder` (UTF-8)
 - `atob` / `btoa`
 
@@ -66,10 +68,11 @@ cargo build --release
 | `node:assert` | strict + non-strict, deep[Strict]Equal, throws/rejects, match |
 | `node:querystring` | parse / stringify / escape / unescape |
 | `node:url` | URL, URLSearchParams, fileURLToPath, pathToFileURL |
+| `node:stream` | Readable / Writable / Duplex / PassThrough, pipeline / finished, Web Streams interop |
 
 ### `Bun.*` namespace
 
-- **`Bun.serve({ port, fetch })`** — minimal HTTP server (tiny_http, sync handler)
+- **`Bun.serve({ port, fetch })`** — concurrent HTTP server (hyper, tokio per-request)
 - **`Bun.file(path)`** — Blob-like with `text()` / `json()` / `bytes()` / `arrayBuffer()` / `exists()` / `size` / `name` / `type`
 - `Bun.write(path, data)`
 - `Bun.sleep(ms)`
@@ -86,15 +89,12 @@ See [`docs/build.md`](docs/build.md).
 
 ## What's still missing
 
-- **Stream APIs** (`ReadableStream` / `WritableStream` / `node:stream`)
 - **HTTPS** in Bun.serve, **HTTP/2**, **WebSocket**
-- **Async `node:fs.promises`** (currently the Promises namespace just re-exports sync — works but blocks the thread)
-- **`Bun.serve` concurrency** (currently one request at a time on the JS thread; tokio is wired but serve still uses tiny_http)
+- **`fetch` honoring `AbortSignal`** (the signal works for user code, just not threaded into reqwest yet)
 - **Live ESM bindings** (`import` is currently a value snapshot at load time)
-- **Sourcemap-aware error stacks** (errors point to rewritten lines, not source)
 - **Worker / Cluster**
-- **bundler** / **package manager** (`bun install`, `bun build`)
-- **shell / SQL / bake**
+- **bundler** / **package manager** (`bun install`, `bun build`, `bun test`)
+- **shell / SQL / bake / FFI**
 
 ## Layout
 
@@ -114,7 +114,7 @@ crates/
 ```sh
 cargo build --workspace             # debug build
 cargo build --release -p bun-cli    # ~3.5MB single binary
-cargo test --workspace              # 90+ tests, all green on macOS arm64
+cargo test --workspace              # 100+ tests, all green on macOS arm64
 ```
 
 Toolchain: nightly Rust (oxc uses `if let` match guards). See

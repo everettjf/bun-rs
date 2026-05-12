@@ -700,6 +700,113 @@ fn async_fetch_does_not_block_timers() {
 }
 
 #[test]
+fn bun_serve_concurrent_requests() {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        const server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+                await new Promise(r => setTimeout(r, 100));
+                return new Response("ok");
+            },
+        });
+        console.log("PORT:" + server.port);
+        "#,
+    )
+    .unwrap();
+
+    let mut child = bun_rs()
+        .arg(dir.join("m.ts"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdout = child.stdout.take().unwrap();
+    let mut acc = Vec::new();
+    let mut buf = [0u8; 256];
+    let start = std::time::Instant::now();
+    let port = loop {
+        if start.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = child.kill();
+            panic!("no port");
+        }
+        if let Ok(n) = stdout.read(&mut buf) {
+            if n > 0 {
+                acc.extend_from_slice(&buf[..n]);
+                if let Some(p) = std::str::from_utf8(&acc)
+                    .ok()
+                    .and_then(|s| s.lines().find_map(|l| l.strip_prefix("PORT:")))
+                    .and_then(|s| s.trim().parse::<u16>().ok())
+                {
+                    break p;
+                }
+            }
+        }
+    };
+
+    // Hand-rolled HTTP/1.0 client; 5 concurrent threads, each a single
+    // request. Measure how long all 5 take.
+    let kickoff = std::time::Instant::now();
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        handles.push(std::thread::spawn(move || {
+            let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.write_all(b"GET /slow HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+            let mut resp = String::new();
+            s.read_to_string(&mut resp).unwrap();
+            resp
+        }));
+    }
+    for h in handles { let r = h.join().unwrap(); assert!(r.contains("200")); }
+    let elapsed = kickoff.elapsed();
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // With true concurrency, 5 × 100ms requests should land in ~150-300ms.
+    // With serial (the old behavior), it would be ~500ms+.
+    assert!(
+        elapsed < std::time::Duration::from_millis(400),
+        "5 concurrent requests took {:?} — handler is still serialized",
+        elapsed
+    );
+}
+
+#[test]
+fn abort_controller_basics() {
+    let out = bun_rs()
+        .args([
+            "-e",
+            r#"
+            const c = new AbortController();
+            let fired = false;
+            c.signal.addEventListener("abort", () => fired = true);
+            if (c.signal.aborted) throw new Error("pre-aborted");
+            c.abort();
+            if (!c.signal.aborted) throw new Error("not aborted");
+            if (!fired) throw new Error("listener didn't fire");
+            if (c.signal.reason.name !== "AbortError") throw new Error("reason name");
+            const a2 = AbortSignal.abort("custom");
+            if (!a2.aborted || a2.reason !== "custom") throw new Error("static abort");
+            try { a2.throwIfAborted(); throw new Error("should have thrown"); } catch (e) {
+                if (e !== "custom") throw new Error("wrong throw");
+            }
+            console.log("ok");
+            "#,
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn bun_serve_echo() {
     use std::io::{Read, Write};
     let dir = tempdir();
