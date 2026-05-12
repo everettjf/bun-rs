@@ -12,6 +12,7 @@ use bun_jsc::{Callback, Context, JsException, Value};
 mod console;
 mod modules;
 mod process_global;
+mod repl;
 mod timers;
 
 pub use console::install_console;
@@ -108,8 +109,10 @@ fn run() -> Result<(), RuntimeError> {
     };
 
     if args.is_empty() {
-        // Future: REPL. For now treat as usage error.
-        return Err(RuntimeError::Usage);
+        // No args → REPL. If stdin isn't a TTY (piped), fall back to "read all
+        // stdin and eval it like -e".
+        let rt = Runtime::new(vec!["bun-rs".to_string(), "[repl]".to_string()]);
+        return repl::run(&rt.ctx);
     }
 
     match args[0].as_str() {

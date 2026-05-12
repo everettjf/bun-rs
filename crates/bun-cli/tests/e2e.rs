@@ -9,6 +9,49 @@ fn bun_rs() -> Command {
 }
 
 #[test]
+fn repl_single_line() {
+    use std::io::Write;
+    let mut child = bun_rs()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"1 + 2\n40 + 2\n")
+        .unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("3"), "stdout: {stdout}");
+    assert!(stdout.contains("42"), "stdout: {stdout}");
+}
+
+#[test]
+fn repl_multiline() {
+    use std::io::Write;
+    let mut child = bun_rs()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"function f(\nx,\ny\n) { return x + y }\nf(10, 5)\n")
+        .unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("15"), "stdout: {stdout}");
+}
+
+#[test]
 fn version_flag() {
     let out = bun_rs().arg("--version").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
