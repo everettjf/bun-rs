@@ -37,10 +37,12 @@ cargo build --release
 - `process.{argv,env,cwd,exit,platform,arch,pid,versions}`
 - `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval`
 - `queueMicrotask`
-- **`fetch`** (blocking ureq under the hood)
+- **`fetch`** — async via tokio + reqwest (rustls); does not block the JS thread
+- **`Buffer`** (Node-compatible, extends Uint8Array, zero-copy from Rust)
 - `URL` / `URLSearchParams` (parsing via Rust `url`)
 - `Headers` / `Request` / `Response`
 - `TextEncoder` / `TextDecoder` (UTF-8)
+- `atob` / `btoa`
 
 ### `node:` modules
 
@@ -48,7 +50,12 @@ cargo build --release
 |---|---|
 | `node:path` | join / resolve / normalize / dirname / basename / extname / isAbsolute / relative, posix + win32 |
 | `node:os` | platform / arch / type / release / hostname / cpus / totalmem / userInfo / EOL |
-| `node:fs` | sync: readFile / writeFile / appendFile / exists / stat / readdir / mkdir / rm / rename / unlink / copyFile / realpath / mkdtemp; `fs.promises` mirrors sync |
+| `node:fs` | sync: readFile (Buffer / utf-8 / hex / latin1) / writeFile (Buffer / string) / appendFile / exists / stat / readdir / mkdir / rm / rename / unlink / copyFile / realpath / mkdtemp; `fs.promises` mirrors sync |
+| `node:buffer` | full `Buffer` class (zero-copy from Rust) |
+| `node:events` | full `EventEmitter` (on/once/off/emit/prependListener/listenerCount/eventNames) |
+| `node:util` | promisify / callbackify / inspect / format / debuglog / types.isX / inherits |
+| `node:crypto` | createHash (md5/sha1/sha256/sha384/sha512) / createHmac / randomBytes / randomUUID / randomInt / timingSafeEqual |
+| `node:child_process` | spawnSync / execSync / exec(cb) |
 
 ### `Bun.*` namespace
 
@@ -69,10 +76,10 @@ See [`docs/build.md`](docs/build.md).
 
 ## What's still missing
 
-- **Buffer** (`node:buffer`) — readFileSync returns String for now, not Buffer
-- **`node:child_process`** (`spawn` / `exec`)
 - **Stream APIs** (`ReadableStream` / `WritableStream` / `node:stream`)
 - **HTTPS** in Bun.serve, **HTTP/2**, **WebSocket**
+- **Async `node:fs.promises`** (currently the Promises namespace just re-exports sync — works but blocks the thread)
+- **`Bun.serve` concurrency** (currently one request at a time on the JS thread; tokio is wired but serve still uses tiny_http)
 - **Live ESM bindings** (`import` is currently a value snapshot at load time)
 - **Sourcemap-aware error stacks** (errors point to rewritten lines, not source)
 - **Worker / Cluster**
@@ -97,7 +104,7 @@ crates/
 ```sh
 cargo build --workspace             # debug build
 cargo build --release -p bun-cli    # ~3.5MB single binary
-cargo test --workspace              # 70+ tests, all green on macOS arm64
+cargo test --workspace              # 85+ tests, all green on macOS arm64
 ```
 
 Toolchain: nightly Rust (oxc uses `if let` match guards). See

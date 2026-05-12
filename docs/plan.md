@@ -104,6 +104,17 @@ bun-rs/
 
 ## 5. 当前进度
 
+### Day 4(2026-05-12):Buffer + 全套 node:* + tokio async
+- ✅ **Buffer**:JS class extends Uint8Array,从 Rust 零拷贝 (`JSObjectMakeTypedArrayWithBytesNoCopy`),utf8/hex/base64/latin1 encoding round-trip
+- ✅ **二进制 I/O**:`fs.readFileSync` 无 encoding → Buffer;`fs.writeFileSync` 接受 Buffer;`Bun.file.bytes`/`arrayBuffer` 零拷贝;`fetch` 响应保留原始 bytes
+- ✅ **node:events** EventEmitter 全部接口
+- ✅ **node:util** promisify/callbackify/inspect/format/debuglog/types
+- ✅ **node:crypto** createHash (md5/sha1/sha256/sha384/sha512) + createHmac + randomBytes/UUID/Int + timingSafeEqual + getHashes
+- ✅ **node:child_process** spawnSync / execSync / exec(callback)
+- ✅ **tokio**:multi-thread runtime + mpsc 任务队列回灌 JS 线程
+- ✅ **async fetch**:reqwest + deferred Promise,setTimeout 在 fetch in-flight 时正常 fire
+- ✅ 86 tests pass
+
 ### Day 3(2026-05-12):剩余 P1 + P2 + P3 大部分
 - ✅ **ESM Phase 2**:模块包装改 `async function`,静态 `import` → `await __bun_require`,动态 `import()` 改写,top-level await
 - ✅ `import.meta.url` / `.filename` / `.dirname` / `.main`
