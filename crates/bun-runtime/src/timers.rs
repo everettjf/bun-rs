@@ -165,15 +165,18 @@ pub fn run_event_loop(ctx: &Context) {
     loop {
         let timer_did = run_one_tick(ctx);
         let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
+        let worker_did = crate::web::worker::pump_parent_events(ctx);
         let server_active = crate::bun_api::serve::any_active();
         let async_pending = crate::async_rt::has_pending_async();
         let readline_active = crate::node_builtins::readline::any_active();
-        if timer_did || async_did {
+        let worker_active = crate::web::worker::any_active();
+        if timer_did || async_did || worker_did {
             continue;
         }
         if !server_active
             && !async_pending
             && !readline_active
+            && !worker_active
             && next_timer_deadline().is_none()
         {
             return;

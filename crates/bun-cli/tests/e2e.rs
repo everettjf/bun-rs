@@ -866,6 +866,40 @@ fn bundle_handles_node_external() {
 }
 
 #[test]
+fn worker_roundtrip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("worker.ts"),
+        r#"
+        onmessage = (e) => {
+            postMessage({ echo: e.data, doubled: typeof e.data === "number" ? e.data * 2 : null });
+        };
+        "#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.ts"),
+        format!(
+            r#"
+            const w = new Worker("{}");
+            const done = new Promise<void>((resolve) => {{
+                w.onmessage = (ev) => {{ if (ev.data.echo === 21 && ev.data.doubled === 42) resolve(); }};
+            }});
+            setTimeout(() => w.postMessage(21), 50);
+            await done;
+            w.terminate();
+            console.log("ok");
+            "#,
+            dir.join("worker.ts").display(),
+        ),
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("main.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn bun_serve_https_tls() {
     // Generate a self-signed cert with openssl, run a TLS Bun.serve,
     // verify it serves over https.

@@ -354,9 +354,11 @@ pub fn await_promise<'ctx>(
         let _ = ctx.eval("undefined", Some("[microtask-drain]"));
         if outcome.borrow().is_some() { break; }
 
-        // Try work in priority order: async completions, timers due now.
+        // Try work in priority order: async completions, worker events,
+        // timers due now.
         let async_did = crate::async_rt::drain_js_tasks(ctx) > 0;
         if async_did { continue; }
+        if crate::web::worker::pump_parent_events(ctx) { continue; }
         let timer_did = crate::timers::run_one_tick(ctx);
         if timer_did { continue; }
 
@@ -364,6 +366,7 @@ pub fn await_promise<'ctx>(
         let can_make_progress = crate::async_rt::has_pending_async()
             || crate::bun_api::serve::any_active()
             || crate::node_builtins::readline::any_active()
+            || crate::web::worker::any_active()
             || crate::timers::next_timer_deadline().is_some();
         if !can_make_progress {
             return Err(

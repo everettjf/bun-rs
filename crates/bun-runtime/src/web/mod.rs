@@ -8,12 +8,14 @@ use bun_jsc::{Callback, Context, Value};
 mod fetch;
 mod url_parse;
 mod websocket;
+pub mod worker;
 
 pub fn install_web(ctx: &Context) {
     // Rust helpers consumed by the JS polyfill.
     url_parse::install(ctx);
     fetch::install(ctx);
     websocket::install(ctx);
+    worker::install(ctx);
 
     // Streams first — the body polyfill below references ReadableStream
     // when wrapping fetch response bodies.
