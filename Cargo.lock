@@ -197,6 +197,7 @@ dependencies = [
  "bun-transpile",
  "bytes",
  "digest 0.10.7",
+ "flate2",
  "futures-util",
  "hmac",
  "http-body-util",

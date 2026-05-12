@@ -23,6 +23,7 @@ pub mod readline;
 pub mod stream;
 pub mod url;
 pub mod util;
+pub mod zlib;
 
 // Per-thread cache of built builtin exports. The Value's raw ref is kept
 // alive via `JSValueProtect` for the duration of the process.
@@ -49,6 +50,7 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "url" | "node:url" => url::build,
         "stream" | "node:stream" => stream::build,
         "readline" | "node:readline" => readline::build,
+        "zlib" | "node:zlib" => zlib::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -80,6 +82,7 @@ fn canonical_name(s: &str) -> &'static str {
         "url" | "node:url" => "url",
         "stream" | "node:stream" => "stream",
         "readline" | "node:readline" => "readline",
+        "zlib" | "node:zlib" => "zlib",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }
