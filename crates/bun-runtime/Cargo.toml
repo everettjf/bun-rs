@@ -11,6 +11,7 @@ bun-jsc-sys = { workspace = true }
 bun-transpile = { workspace = true }
 bun-loader = { workspace = true }
 bun-bundler = { workspace = true }
+bun-install = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }

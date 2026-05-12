@@ -170,6 +170,27 @@ fn run() -> Result<(), RuntimeError> {
                 Err(exc) => Err(RuntimeError::Throw(format_exception(&exc))),
             }
         }
+        "install" => {
+            let mut prod = false;
+            for a in &args[1..] {
+                if a == "--production" { prod = true; }
+            }
+            let opts = bun_install::InstallOptions {
+                cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                production: prod,
+                registry: std::env::var("BUN_REGISTRY")
+                    .unwrap_or_else(|_| "https://registry.npmjs.org".into()),
+            };
+            match bun_install::install(&opts) {
+                Ok(r) => {
+                    eprintln!("\n{} packages installed", r.installed.len());
+                    return Ok(());
+                }
+                Err(e) => {
+                    return Err(RuntimeError::Throw(format!("install failed: {e}")));
+                }
+            }
+        }
         "build" => {
             // bun-rs build <entry> [--outfile <path>]
             let entry = args.get(1).ok_or(RuntimeError::Usage)?.clone();

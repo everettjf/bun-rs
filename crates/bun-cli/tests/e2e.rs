@@ -866,6 +866,36 @@ fn bundle_handles_node_external() {
 }
 
 #[test]
+fn bun_install_real_package() {
+    // Network-dependent: pulls leftpad@0.0.1 from npm. Skip if offline.
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{"name":"t","version":"0.0.1","dependencies":{"leftpad":"0.0.1"}}"#,
+    )
+    .unwrap();
+    let install = bun_rs().arg("install").current_dir(&dir).output().unwrap();
+    if !install.status.success() {
+        eprintln!(
+            "install failed (offline?): {}",
+            String::from_utf8_lossy(&install.stderr)
+        );
+        return;
+    }
+    assert!(dir.join("node_modules/leftpad/index.js").exists());
+
+    // Now use it from TS — exercises CJS interop on a real npm package.
+    std::fs::write(
+        dir.join("m.ts"),
+        "import leftpad from 'leftpad';\nconsole.log(leftpad('7', 4, '0'));",
+    )
+    .unwrap();
+    let run = bun_rs().arg(dir.join("m.ts")).current_dir(&dir).output().unwrap();
+    assert!(run.status.success(), "run stderr: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).trim(), "0007");
+}
+
+#[test]
 fn bun_ffi_basic_calls() {
     // Compile a tiny C library and verify int/double/cstring FFI.
     let dir = tempdir();

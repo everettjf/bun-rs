@@ -52,8 +52,8 @@ pub fn install_module_loader(ctx: &Context) {
     // `then` chaining is native.
     ctx.eval(
         r#"
-        globalThis.__bun_chain_exports = function(bodyPromise, exports) {
-            return bodyPromise.then(() => exports);
+        globalThis.__bun_chain_exports = function(bodyPromise, module) {
+            return bodyPromise.then(() => module.exports);
         };
         "#,
         Some("[bun-chain-exports]"),
@@ -165,12 +165,21 @@ fn load_module<'ctx>(
     );
     let parent = abs.parent().unwrap_or_else(|| Path::new("."));
 
-    // Wrap in an async function. The body uses `await __bun_require(...)`
-    // for static imports, and bare `__bun_require(...)` is itself a thenable
-    // call so `import()` (rewritten to `__bun_require()`) works too.
-    // `__bun_meta` carries `import.meta` (rewritten in the source).
+    // Wrap in an async function. We pass an indirection object `__module`
+    // so CJS code that does `module.exports = fn` can be picked up. ESM
+    // code writes to `__exports.X = X`, which is the same object as
+    // `__module.exports`, so the two styles share storage.
+    //
+    // ESM modules get __esModule = true so default-imports unwrap correctly;
+    // CJS files (no static imports/exports) leave it false, and the
+    // default-import shim in the rewriter falls back to the whole value.
     let wrapped = format!(
-        "(async function (__exports, __bun_require, __filename, __dirname, __bun_meta) {{\n{}\n}})",
+        "(async function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
+           const __exports = __module.exports;\n\
+           const exports = __module.exports;\n\
+           const module = __module;\n\
+           {}\n\
+         }})",
         prepared.rewritten
     );
 
@@ -201,8 +210,36 @@ fn load_module<'ctx>(
     let dirname = Value::new_string(ctx, parent.to_str().unwrap_or(""));
     let meta = build_import_meta(ctx, &abs);
 
+    // Build the `module` indirection: `{ exports: <the cached exports> }`.
+    // We also stamp __esModule = true when the prepared module looks ESM
+    // (had static imports OR the source contained `export `), so that
+    // `import x from "esm"` unwraps correctly via the rewriter's default
+    // shim while `import x from "cjs"` returns the whole module.exports.
+    let looks_esm = !prepared.static_imports.is_empty()
+        || prepared.original_source.contains("export ")
+        || prepared.original_source.contains("export{");
+    let module_obj = ctx
+        .eval("({})", Some("[module-indirection]"))
+        .map_err(|e| LoaderRuntimeError::Eval {
+            path: abs.clone(),
+            message: e.to_string(),
+        })?;
+    let module_obj_o = module_obj.to_object().map_err(|e| LoaderRuntimeError::Eval {
+        path: abs.clone(),
+        message: e.to_string(),
+    })?;
+    module_obj_o.set_property("exports", &exports_val).map_err(|e| LoaderRuntimeError::Eval {
+        path: abs.clone(),
+        message: e.to_string(),
+    })?;
+    if looks_esm {
+        let _ = exports_val
+            .to_object()
+            .map(|o| o.set_property("__esModule", &Value::new_bool(ctx, true)));
+    }
+
     let body_promise = factory
-        .call(None, &[exports_val, require_fn, filename, dirname, meta])
+        .call(None, &[module_obj, require_fn, filename, dirname, meta])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),
@@ -221,8 +258,10 @@ fn load_module<'ctx>(
             path: abs.clone(),
             message: e.to_string(),
         })?;
+    // Pass `__module` so the chain can return module.exports — which may
+    // have been reassigned by CJS bodies (`module.exports = fn`).
     let chained = chain_fn
-        .call(None, &[body_promise, exports_val])
+        .call(None, &[body_promise, module_obj])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),

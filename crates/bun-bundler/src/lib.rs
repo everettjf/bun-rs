@@ -126,8 +126,11 @@ pub fn bundle(entry: &Path) -> Result<BundleOutput, BundleError> {
             .replace('"', "\\\"");
         out.push_str(&format!("    // module {id}: {path_str}\n"));
         out.push_str(
-            "    async (__exports, __bun_require, __filename, __dirname, __bun_meta) => {\n",
+            "    async (__module, __bun_require, __filename, __dirname, __bun_meta) => {\n",
         );
+        out.push_str("      const __exports = __module.exports;\n");
+        out.push_str("      const exports = __module.exports;\n");
+        out.push_str("      const module = __module;\n");
         out.push_str(&rewritten);
         out.push_str("\n    },\n");
         let _ = dir_str;
@@ -258,14 +261,16 @@ const BUNDLE_RUNTIME: &str = r#"  async function __bun_load(id) {
     if (id in __cache) return __cache[id];
     if (id in __pending) return __pending[id];
     const exports = {};
+    exports.__esModule = true;
     __pending[id] = exports;
+    const mod = { exports };
     const path = __PATHS[id] || "";
     const dir = path.lastIndexOf("/") >= 0 ? path.slice(0, path.lastIndexOf("/")) : "";
     const meta = { url: path ? "file://" + path : "", filename: path, dirname: dir, main: id === 0 };
-    await __ALL[id](exports, __bun_require_external, path, dir, meta);
-    __cache[id] = exports;
+    await __ALL[id](mod, __bun_require_external, path, dir, meta);
+    __cache[id] = mod.exports;
     delete __pending[id];
-    return exports;
+    return mod.exports;
   }
   async function __bun_require_external(spec, _importer) {
     if (typeof globalThis.__bun_require === "function") return globalThis.__bun_require(spec, _importer);

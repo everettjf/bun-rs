@@ -94,11 +94,13 @@ fn remap_frame(line: &str) -> Option<String> {
     let mapped = MAPS.with(|m| {
         let map = m.borrow();
         let entry = map.get(&path)?;
-        // Wrapper added 1 line of prefix at the top.
-        if line_no < 2 {
+        // Wrapper prefix: `(async function (...) {` (1) + `const __exports`,
+        // `const exports`, `const module` (3) = 4 lines before the body.
+        const WRAPPER_PREFIX_LINES: u32 = 4;
+        if line_no <= WRAPPER_PREFIX_LINES {
             return Some(("wrapper-prefix".to_string(), entry.original_lines));
         }
-        let body_line = (line_no - 1) as usize;
+        let body_line = (line_no - WRAPPER_PREFIX_LINES) as usize;
         // line_map is 0-indexed; body_line is 1-indexed.
         let user_line = entry.line_map.get(body_line - 1).copied().unwrap_or(0);
         Some(("ok".to_string(), user_line))
@@ -127,13 +129,12 @@ mod tests {
 
     #[test]
     fn remap_frame_with_registered_map() {
-        // Register a fake module whose body line 3 came from .ts line 7.
+        // Wrapper prefix is 4 lines, so JSC line N = body line (N-4).
         let path = PathBuf::from("/tmp/test.ts");
-        // line_map indexing: line_map[body_line - 1] = user_line
-        // body lines 1..=3, with line 1 synthetic, 2 = user line 5, 3 = user line 7.
+        // line_map[0]=0 (synthetic), [1]=5, [2]=7.
         register(path.clone(), vec![0, 5, 7], "1\n2\n3\n4\n5\n6\n7\n");
-        // JSC line 4 = wrapper line 4, body line 3 (4 - 1 = 3), user line 7.
-        let out = remap_frame("f@/tmp/test.ts:4:10").unwrap();
+        // JSC line 7 → body line 3 → user line 7.
+        let out = remap_frame("f@/tmp/test.ts:7:10").unwrap();
         assert_eq!(out, "f@/tmp/test.ts:7");
     }
 
@@ -141,8 +142,8 @@ mod tests {
     fn remap_frame_synthetic_tag() {
         let path = PathBuf::from("/tmp/test2.ts");
         register(path.clone(), vec![0, 0, 5], "1\n2\n3\n4\n5\n");
-        // body line 1 → user line 0 (synthetic). Should tag rather than lie.
-        let out = remap_frame("f@/tmp/test2.ts:2:0").unwrap();
+        // JSC line 5 → body line 1 → user line 0 (synthetic).
+        let out = remap_frame("f@/tmp/test2.ts:5:0").unwrap();
         assert!(out.contains("<bunrs-internal>"));
     }
 }

@@ -8,6 +8,7 @@ members = [
     "crates/bun-transpile",
     "crates/bun-loader",
     "crates/bun-bundler",
+    "crates/bun-install",
 ]
 
 [workspace.package]
@@ -25,6 +26,7 @@ bun-jsc = { path = "crates/bun-jsc" }
 bun-transpile = { path = "crates/bun-transpile" }
 bun-loader = { path = "crates/bun-loader" }
 bun-bundler = { path = "crates/bun-bundler" }
+bun-install = { path = "crates/bun-install" }
 
 anyhow = "1"
 thiserror = "2"

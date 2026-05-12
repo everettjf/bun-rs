@@ -188,8 +188,11 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     for s in specs {
                         match s {
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(ds) => {
+                                // esModuleInterop: ESM modules expose
+                                // `.default`; CJS (whose .default is
+                                // undefined) gets the whole module.exports.
                                 emit.synth(&format!(
-                                    "const {} = {local}.default;",
+                                    "const {} = ({local} && {local}.__esModule) ? {local}.default : {local};",
                                     binding_name(&ds.local)
                                 ));
                             }
