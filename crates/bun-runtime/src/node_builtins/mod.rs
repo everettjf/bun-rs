@@ -11,9 +11,13 @@ use bun_jsc::{Context, Value};
 use bun_jsc_sys as sys;
 
 pub mod buffer;
+pub mod child_process;
+pub mod crypto;
+pub mod events;
 pub mod fs;
 pub mod os;
 pub mod path;
+pub mod util;
 
 // Per-thread cache of built builtin exports. The Value's raw ref is kept
 // alive via `JSValueProtect` for the duration of the process.
@@ -31,6 +35,10 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "os" | "node:os" => os::build,
         "fs" | "node:fs" => fs::build,
         "buffer" | "node:buffer" => buffer::build,
+        "events" | "node:events" => events::build,
+        "util" | "node:util" => util::build,
+        "crypto" | "node:crypto" => crypto::build,
+        "child_process" | "node:child_process" => child_process::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -53,6 +61,10 @@ fn canonical_name(s: &str) -> &'static str {
         "os" | "node:os" => "os",
         "fs" | "node:fs" => "fs",
         "buffer" | "node:buffer" => "buffer",
+        "events" | "node:events" => "events",
+        "util" | "node:util" => "util",
+        "crypto" | "node:crypto" => "crypto",
+        "child_process" | "node:child_process" => "child_process",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }

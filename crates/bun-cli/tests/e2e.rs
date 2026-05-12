@@ -808,6 +808,115 @@ fn writefile_accepts_buffer() {
 }
 
 #[test]
+fn node_events_emitter() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import EventEmitter from "node:events";
+        const e = new EventEmitter();
+        let calls = 0;
+        e.on("foo", (a, b) => { calls++; if (a + b !== 3) throw new Error("args"); });
+        e.emit("foo", 1, 2);
+        e.emit("foo", 1, 2);
+        if (calls !== 2) throw new Error("calls " + calls);
+        if (e.listenerCount("foo") !== 1) throw new Error("count");
+        let onceCalls = 0;
+        e.once("o", () => onceCalls++);
+        e.emit("o"); e.emit("o");
+        if (onceCalls !== 1) throw new Error("once " + onceCalls);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_util_promisify_and_format() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import util from "node:util";
+        const fn = (ms: number, cb: any) => setTimeout(() => cb(null, ms * 2), ms);
+        const p = util.promisify(fn);
+        const v = await p(5);
+        if (v !== 10) throw new Error("promisify " + v);
+        const f = util.format("a=%s b=%d c=%j", "x", 7, {n:1});
+        if (f !== 'a=x b=7 c={"n":1}') throw new Error("format: " + f);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_crypto_hash_hmac_random() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import crypto from "node:crypto";
+        // Known SHA-256 of "hello".
+        const sha = crypto.createHash("sha256").update("hello").digest("hex");
+        if (sha !== "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+            throw new Error("sha256 " + sha);
+        // Known HMAC-SHA256("data", "secret").
+        const hmac = crypto.createHmac("sha256", "secret").update("data").digest("hex");
+        if (hmac !== "1b2c16b75bd2a870c114153ccda5bcfca63314bc722fa160d690de133ccbb9db")
+            throw new Error("hmac " + hmac);
+        const r = crypto.randomBytes(8);
+        if (!Buffer.isBuffer(r) || r.length !== 8) throw new Error("randomBytes");
+        const u = crypto.randomUUID();
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(u))
+            throw new Error("uuid " + u);
+        const a = Buffer.from("abcd"), b = Buffer.from("abcd"), c = Buffer.from("xbcd");
+        if (!crypto.timingSafeEqual(a, b)) throw new Error("ts eq");
+        if (crypto.timingSafeEqual(a, c)) throw new Error("ts neq");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn node_child_process_spawn_exec() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import cp from "node:child_process";
+        const r = cp.spawnSync("echo", ["bun-rs"]);
+        if (r.status !== 0) throw new Error("spawn status");
+        if (!r.stdout.toString().includes("bun-rs")) throw new Error("spawn out");
+        const text = cp.execSync("printf hello", { encoding: "utf-8" });
+        if (text !== "hello") throw new Error("execSync " + text);
+        await new Promise<void>((resolve, reject) => {
+            cp.exec("printf cbStyle", (err: any, stdout: string) => {
+                if (err) reject(err);
+                else if (stdout !== "cbStyle") reject(new Error("exec " + stdout));
+                else resolve();
+            });
+        });
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn node_fs_roundtrip() {
     let dir = tempdir();
     std::fs::write(
