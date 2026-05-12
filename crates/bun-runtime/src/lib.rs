@@ -41,6 +41,9 @@ impl Runtime {
         install_module_loader(&ctx);
         web::install_web(&ctx);
         buffer::install(&ctx);
+        // Pre-warm node:stream so fs.createReadStream can use globalThis
+        // refs without making the user import "node:stream" first.
+        let _ = node_builtins::load(&ctx, "stream");
         bun_api::install_bun(&ctx);
         install_global_this(&ctx);
         Self { ctx }

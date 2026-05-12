@@ -19,6 +19,7 @@ pub mod fs;
 pub mod os;
 pub mod path;
 pub mod querystring;
+pub mod stream;
 pub mod url;
 pub mod util;
 
@@ -45,6 +46,7 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "assert" | "node:assert" => assert::build,
         "querystring" | "node:querystring" => querystring::build,
         "url" | "node:url" => url::build,
+        "stream" | "node:stream" => stream::build,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -74,6 +76,7 @@ fn canonical_name(s: &str) -> &'static str {
         "assert" | "node:assert" => "assert",
         "querystring" | "node:querystring" => "querystring",
         "url" | "node:url" => "url",
+        "stream" | "node:stream" => "stream",
         other => Box::leak(other.to_string().into_boxed_str()),
     }
 }

@@ -21,6 +21,7 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     let exports = exports_v.to_object().unwrap();
 
     install_sync(ctx, &exports);
+    install_streaming(ctx, &exports);
 
     // fs.promises — wrap every sync fn in Promise.resolve / .reject.
     let promises_v = ctx.eval("({})", Some("[node:fs.promises]")).unwrap();
@@ -29,6 +30,202 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
+}
+
+fn install_streaming(ctx: &Context, obj: &bun_jsc::Object<'_>) {
+    // createReadStream(path, opts?) → Node Readable streaming the file in 16KB chunks.
+    bind(ctx, obj, "createReadStream", |args| {
+        let path = args.get(0).to_string();
+        let highwater = args
+            .get(1)
+            .to_object()
+            .ok()
+            .and_then(|o| o.get_property("highWaterMark").ok())
+            .map(|v| v.to_number() as usize)
+            .unwrap_or(64 * 1024);
+
+        // Build a Node Readable on the JS side via the globally-installed
+        // __bun_NodeReadable class; we'll push chunks into it from Rust.
+        let ctx = args.context();
+        let builder = ctx
+            .eval(
+                r#"
+                (function build(start) {
+                    const r = new globalThis.__bun_NodeReadable({});
+                    let started = false;
+                    r._read = () => {
+                        if (started) return;
+                        started = true;
+                        start(r);
+                    };
+                    return r;
+                })
+                "#,
+                Some("[fs.createReadStream]"),
+            )
+            .map_err(|e| e.to_string())?
+            .to_object()
+            .map_err(|e| e.to_string())?;
+
+        // Rust closure that, when invoked, spawns a tokio task that opens the
+        // file and pumps chunks back. `start_obj` is a JS callback we hand to
+        // the builder; when JS calls it (start(r)), we receive the Readable
+        // and capture it for cross-thread use.
+        let start_cb = Callback::new(ctx, "fs_create_read_stream_start", move |args| {
+            let r_obj = args.get(0).to_object().map_err(|e| e.to_string())?;
+            let r_raw = r_obj.as_raw();
+            // Protect r so it stays alive across threads.
+            unsafe {
+                sys::JSValueProtect(args.context().as_raw(), r_raw as sys::JSValueRef);
+            }
+            let r_id = r_raw as usize;
+            let path = path.clone();
+            crate::async_rt::note_started();
+            crate::async_rt::spawn(async move {
+                let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+                    use std::io::Read;
+                    let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+                    let mut buf = vec![0u8; highwater];
+                    loop {
+                        let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+                        if n == 0 {
+                            push_to_readable(r_id, None);
+                            return Ok(());
+                        }
+                        let chunk: Vec<u8> = buf[..n].to_vec();
+                        push_to_readable(r_id, Some(chunk));
+                    }
+                })
+                .await;
+                if let Ok(Err(e)) = result {
+                    push_error(r_id, e);
+                }
+                // Unprotect on the JS thread.
+                crate::async_rt::post_to_js(move |ctx| {
+                    let raw = r_id as sys::JSValueRef;
+                    unsafe {
+                        sys::JSValueUnprotect(ctx.as_raw(), raw);
+                    }
+                    crate::async_rt::note_finished();
+                });
+            });
+            Ok(Value::new_undefined(args.context()))
+        });
+        let r = builder
+            .call(None, &[start_cb.value_in(ctx)])
+            .map_err(|e| e.to_string())?;
+        std::mem::forget(start_cb);
+        Ok(r)
+    });
+
+    // createWriteStream(path, opts?) → Node Writable; writes go through tokio.
+    bind(ctx, obj, "createWriteStream", |args| {
+        let path = args.get(0).to_string();
+        let ctx = args.context();
+        let builder = ctx
+            .eval(
+                r#"
+                (function build(writeFn, closeFn) {
+                    return new globalThis.__bun_NodeWritable({
+                        write(chunk, enc, cb) { writeFn(chunk, cb); },
+                        // close on end is handled via the wrapper.
+                    });
+                })
+                "#,
+                Some("[fs.createWriteStream]"),
+            )
+            .unwrap()
+            .to_object()
+            .unwrap();
+
+        let file_slot: std::rc::Rc<std::cell::RefCell<Option<std::fs::File>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        {
+            // Open the file synchronously on first construction. Truncate-by-default.
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&path)
+                .map_err(|e| e.to_string())?;
+            *file_slot.borrow_mut() = Some(f);
+        }
+        let file_slot_for_write = file_slot.clone();
+        let write_cb = Callback::new(ctx, "fs_write_stream_write", move |args| {
+            use std::io::Write;
+            let chunk_v = args.get(0);
+            let cb = args.get(1);
+            let bytes: Vec<u8> = match chunk_v.typed_array_bytes() {
+                Some(b) => b.to_vec(),
+                None => chunk_v.to_string().into_bytes(),
+            };
+            let mut g = file_slot_for_write.borrow_mut();
+            if let Some(f) = g.as_mut() {
+                let res = f.write_all(&bytes);
+                if let Ok(cb_obj) = cb.to_object() {
+                    if cb_obj.is_function() {
+                        let err = match res {
+                            Ok(()) => Value::new_null(args.context()),
+                            Err(e) => Value::new_string(args.context(), &e.to_string()),
+                        };
+                        let _ = cb_obj.call(None, &[err]);
+                    }
+                }
+            }
+            Ok(Value::new_undefined(args.context()))
+        });
+
+        let close_cb = Callback::new(ctx, "fs_write_stream_close", move |args| {
+            *file_slot.borrow_mut() = None;
+            Ok(Value::new_undefined(args.context()))
+        });
+
+        let r = builder
+            .call(None, &[write_cb.value_in(ctx), close_cb.value_in(ctx)])
+            .map_err(|e| e.to_string())?;
+        std::mem::forget(write_cb);
+        std::mem::forget(close_cb);
+        Ok(r)
+    });
+}
+
+/// Helpers called from tokio tasks. Each just queues work on the JS thread.
+
+fn push_to_readable(r_id: usize, chunk: Option<Vec<u8>>) {
+    crate::async_rt::post_to_js(move |ctx| {
+        let raw = r_id as sys::JSObjectRef;
+        let obj = unsafe { bun_jsc::Object::from_raw_for_runtime(ctx, raw) };
+        let push_fn = match obj.get_property("push") {
+            Ok(p) => match p.to_object() {
+                Ok(o) => o,
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+        match chunk {
+            Some(bytes) => {
+                let u8 = crate::buffer::buffer_from_bytes(ctx, bytes);
+                let _ = push_fn.call(Some(obj), &[u8]);
+            }
+            None => {
+                let _ = push_fn.call(Some(obj), &[Value::new_null(ctx)]);
+            }
+        }
+    });
+}
+
+fn push_error(r_id: usize, message: String) {
+    crate::async_rt::post_to_js(move |ctx| {
+        let raw = r_id as sys::JSObjectRef;
+        let obj = unsafe { bun_jsc::Object::from_raw_for_runtime(ctx, raw) };
+        let emit = match obj.get_property("emit").and_then(|v| v.to_object()) {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        let evt = Value::new_string(ctx, "error");
+        let err = Value::new_string(ctx, &message);
+        let _ = emit.call(Some(obj), &[evt, err]);
+    });
 }
 
 fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {

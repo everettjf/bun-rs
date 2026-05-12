@@ -239,10 +239,25 @@ Errors are `AssertionError` with `actual` / `expected` / `operator` /
 Re-exports `URL` and `URLSearchParams` plus `fileURLToPath(url)` and
 `pathToFileURL(path)` (returns a URL instance).
 
+### `node:stream` ✅
+
+`Readable`, `Writable`, `Duplex`, `PassThrough`, `Transform` (alias of
+Duplex). EventEmitter-based. Supports `push` / `read` / `pipe` / `pause`
+/ `resume` / `destroy`, `for await...of`, `Readable.from(iter)`. Web
+Streams interop via `Readable.toWeb` / `Readable.fromWeb` (same on
+Writable). `pipeline(...streams, cb?)` and `finished(s, cb?)` helpers.
+
+### `node:fs` streaming ✅
+
+`createReadStream(path, opts?)` returns a Node Readable that streams
+the file in `highWaterMark`-sized chunks (default 64KB) via tokio
+`spawn_blocking`. `createWriteStream(path)` returns a Writable that
+writes synchronously on a per-chunk callback. Both work with `pipe()`.
+
 ### Other `node:*` ❌
 
-Not present in 0.1: `net`, `http`, `https`, `tls`, `dns`, `stream`,
-`zlib`, `tty`, `readline`, `worker_threads`, `cluster`, `inspector`,
+Not present yet: `net`, `http`, `https`, `tls`, `dns`, `zlib`,
+`tty`, `readline`, `worker_threads`, `cluster`, `inspector`,
 `async_hooks`, `v8`, `vm`, `repl`, `domain`, `dgram`.
 
 ---

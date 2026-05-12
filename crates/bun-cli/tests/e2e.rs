@@ -939,6 +939,93 @@ fn writable_stream_collect_and_close() {
 }
 
 #[test]
+fn node_stream_readable_pipe_writable() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import { Readable, Writable } from "node:stream";
+        const src = Readable.from([1, 2, 3, 4]);
+        const out: number[] = [];
+        const sink = new Writable({
+            write(chunk, enc, cb) { out.push(chunk); cb(); },
+        });
+        src.pipe(sink);
+        await new Promise<void>(res => sink.on("finish", res));
+        if (out.join(",") !== "1,2,3,4") throw new Error(out.join(","));
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs().arg(dir.join("m.ts")).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn fs_create_read_stream_chunks_a_big_file() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import fs from "node:fs";
+        import path from "node:path";
+        const file = path.join(process.cwd(), "big.bin");
+        const data = new Uint8Array(100 * 1024);
+        for (let i = 0; i < data.length; i++) data[i] = i & 0xff;
+        fs.writeFileSync(file, data);
+        let bytes = 0, chunks = 0;
+        await new Promise<void>((resolve, reject) => {
+            const r = fs.createReadStream(file);
+            r.on("data", (c: Buffer) => { bytes += c.length; chunks++; });
+            r.on("end", resolve);
+            r.on("error", reject);
+        });
+        fs.unlinkSync(file);
+        if (bytes !== 102400) throw new Error("bytes " + bytes);
+        if (chunks < 2) throw new Error("expected multiple chunks, got " + chunks);
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
+fn fs_create_write_stream_round_trip() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("m.ts"),
+        r#"
+        import fs from "node:fs";
+        const w = fs.createWriteStream("out.bin");
+        w.write(Buffer.from("a "));
+        w.write(Buffer.from("b "));
+        w.write(Buffer.from("c"));
+        await new Promise<void>(res => w.end(res));
+        const text = fs.readFileSync("out.bin", "utf-8");
+        if (text !== "a b c") throw new Error("text: " + text);
+        fs.unlinkSync("out.bin");
+        console.log("ok");
+        "#,
+    )
+    .unwrap();
+    let out = bun_rs()
+        .arg(dir.join("m.ts"))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+}
+
+#[test]
 fn error_stack_maps_to_source_lines() {
     // Throw on a known line and confirm the stack frame names that line,
     // not the rewritten/wrapped script line.
