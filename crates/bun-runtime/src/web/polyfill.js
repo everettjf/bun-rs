@@ -527,6 +527,137 @@
   if (typeof g.reportError === "undefined") {
     g.reportError = (err) => { console.error(err); };
   }
+
+  // ── Event / CustomEvent / EventTarget — minimal DOM-shape stubs ────
+  if (typeof g.Event === "undefined") {
+    class Event {
+      constructor(type, init) {
+        init = init || {};
+        this.type = String(type);
+        this.bubbles = !!init.bubbles;
+        this.cancelable = !!init.cancelable;
+        this.composed = !!init.composed;
+        this.defaultPrevented = false;
+        this.timeStamp = Date.now();
+        this.target = null;
+        this.currentTarget = null;
+        this.isTrusted = false;
+        this.eventPhase = 0;
+      }
+      preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+      stopPropagation() {}
+      stopImmediatePropagation() {}
+    }
+    g.Event = Event;
+  }
+  if (typeof g.CustomEvent === "undefined") {
+    class CustomEvent extends g.Event {
+      constructor(type, init) {
+        super(type, init);
+        this.detail = (init && init.detail) ?? null;
+      }
+    }
+    g.CustomEvent = CustomEvent;
+  }
+  if (typeof g.ErrorEvent === "undefined") {
+    class ErrorEvent extends g.Event {
+      constructor(type, init) {
+        super(type, init);
+        init = init || {};
+        this.error = init.error || null;
+        this.message = init.message || "";
+        this.filename = init.filename || "";
+        this.lineno = init.lineno || 0;
+        this.colno = init.colno || 0;
+      }
+    }
+    g.ErrorEvent = ErrorEvent;
+  }
+  if (typeof g.MessageEvent === "undefined") {
+    class MessageEvent extends g.Event {
+      constructor(type, init) {
+        super(type, init);
+        init = init || {};
+        this.data = init.data;
+        this.origin = init.origin || "";
+        this.lastEventId = init.lastEventId || "";
+        this.source = init.source || null;
+        this.ports = init.ports || [];
+      }
+    }
+    g.MessageEvent = MessageEvent;
+  }
+  if (typeof g.CloseEvent === "undefined") {
+    class CloseEvent extends g.Event {
+      constructor(type, init) {
+        super(type, init);
+        init = init || {};
+        this.code = init.code || 0;
+        this.reason = init.reason || "";
+        this.wasClean = !!init.wasClean;
+      }
+    }
+    g.CloseEvent = CloseEvent;
+  }
+  if (typeof g.PromiseRejectionEvent === "undefined") {
+    class PromiseRejectionEvent extends g.Event {
+      constructor(type, init) {
+        super(type, init);
+        init = init || {};
+        this.promise = init.promise;
+        this.reason = init.reason;
+      }
+    }
+    g.PromiseRejectionEvent = PromiseRejectionEvent;
+  }
+  if (typeof g.EventTarget === "undefined") {
+    class EventTarget {
+      constructor() { this._listeners = {}; }
+      addEventListener(type, fn, _opts) {
+        (this._listeners[type] = this._listeners[type] || []).push(fn);
+      }
+      removeEventListener(type, fn) {
+        const a = this._listeners[type];
+        if (!a) return;
+        const i = a.indexOf(fn);
+        if (i >= 0) a.splice(i, 1);
+      }
+      dispatchEvent(ev) {
+        const a = this._listeners[ev.type] || [];
+        ev.target = this;
+        ev.currentTarget = this;
+        for (const fn of a.slice()) {
+          try {
+            if (typeof fn === "function") fn.call(this, ev);
+            else if (fn && typeof fn.handleEvent === "function") fn.handleEvent(ev);
+          } catch (e) { console.error(e); }
+        }
+        return !ev.defaultPrevented;
+      }
+    }
+    g.EventTarget = EventTarget;
+  }
+
+  // self getter — alias for globalThis. Bun's tests check this is a getter
+  // on the global, so use defineProperty.
+  if (!Object.getOwnPropertyDescriptor(g, "self") || !Object.getOwnPropertyDescriptor(g, "self").get) {
+    Object.defineProperty(g, "self", { get() { return g; }, configurable: true });
+  }
+  if (!Object.getOwnPropertyDescriptor(g, "window") || !Object.getOwnPropertyDescriptor(g, "window").get) {
+    Object.defineProperty(g, "window", { get() { return g; }, configurable: true });
+  }
+  if (typeof g.frames === "undefined") g.frames = g;
+
+  // ── HTMLRewriter (stub) — Bun-specific streaming HTML transformer ──
+  if (typeof g.HTMLRewriter === "undefined") {
+    class HTMLRewriter {
+      constructor() { this._handlers = []; }
+      on(_sel, _h) { return this; }
+      onDocument(_h) { return this; }
+      transform(input) { return input; }
+    }
+    g.HTMLRewriter = HTMLRewriter;
+  }
   if (typeof g.structuredClone === "undefined") {
     g.structuredClone = function (v) {
       try { return JSON.parse(JSON.stringify(v)); } catch { return v; }

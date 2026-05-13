@@ -404,6 +404,8 @@ const GLOBALS: &str = r#"
       },
       toHaveLength(n) { check(received && received.length === n, n, "toHaveLength"); },
       toMatch(re) { check(typeof re === "string" ? received.includes(re) : re.test(received), re, "toMatch"); },
+      // Alias: jest's toThrowError === toThrow.
+      toThrowError(matcher) { return obj.toThrow(matcher); },
       toThrow(matcher) {
         let caught;
         try { received(); } catch (e) { caught = e; }
