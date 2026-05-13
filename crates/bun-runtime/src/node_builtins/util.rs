@@ -187,6 +187,61 @@ const POLYFILL: &str = r#"
     Object.setPrototypeOf(ctor.prototype, super_.prototype);
   };
 
+  // Node 18+ util additions used by Bun's tests.
+  util.parseArgs = function (config) {
+    const args = (config && config.args) || process.argv.slice(2);
+    const out = { values: {}, positionals: [] };
+    const opts = (config && config.options) || {};
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a.startsWith("--")) {
+        const eq = a.indexOf("=");
+        const name = eq < 0 ? a.slice(2) : a.slice(2, eq);
+        const def = opts[name] || {};
+        if (def.type === "boolean") out.values[name] = eq < 0 ? true : a.slice(eq + 1) !== "false";
+        else if (eq < 0) { out.values[name] = args[++i]; }
+        else { out.values[name] = a.slice(eq + 1); }
+      } else if (a.startsWith("-")) {
+        out.values[a.slice(1)] = true;
+      } else {
+        out.positionals.push(a);
+      }
+    }
+    return out;
+  };
+  util.styleText = (style, text) => String(text);
+  util.transferableAbortController = () => new AbortController();
+  util.transferableAbortSignal = (s) => s;
+  util.aborted = (signal) => new Promise(res => {
+    if (signal.aborted) return res();
+    signal.addEventListener("abort", () => res(), { once: true });
+  });
+  util.MIMEType = globalThis.Bun ? globalThis.Bun.MIMEType : class MIMEType {};
+  util.MIMEParams = class MIMEParams {
+    constructor() { this._m = new Map(); }
+    get(k) { return this._m.get(k); }
+    set(k, v) { this._m.set(k, v); }
+    has(k) { return this._m.has(k); }
+    delete(k) { this._m.delete(k); }
+    entries() { return this._m.entries(); }
+    keys() { return this._m.keys(); }
+    values() { return this._m.values(); }
+    [Symbol.iterator]() { return this.entries(); }
+  };
+  // sysErrorNameFromLibuv(code) — bun:internal-for-testing exposes this.
+  util.sysErrorNameFromLibuv = function (code) {
+    const map = {
+      "-4058": "ENOENT", "-2": "ENOENT",
+      "-4068": "EACCES",
+      "-4083": "EEXIST",
+      "-4048": "EISDIR",
+      "-4067": "EBUSY",
+      "-4063": "ENOTDIR",
+      "-4046": "ENOTEMPTY",
+    };
+    return map[String(code)] || ("UNKNOWN_" + code);
+  };
+
   return util;
 })()
 "#;
