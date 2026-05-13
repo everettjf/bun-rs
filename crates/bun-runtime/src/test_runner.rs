@@ -346,6 +346,12 @@ const GLOBALS: &str = r#"
   // .if(cond) — run only if cond is truthy.
   g.test.if = (cond) => (cond ? g.test : g.test.skip);
   g.it.if = g.test.if;
+  g.test.concurrent = (name, fn) => pushTest(name, fn);
+  g.it.concurrent = g.test.concurrent;
+  g.test.concurrent.skip = g.test.skip;
+  g.test.concurrent.only = g.test.only;
+  g.test.concurrent.each = g.test.each;
+  // .each pattern continues below
   g.test.each = (rows) => (name, fn) => {
     for (const row of rows) {
       const args = Array.isArray(row) ? row : [row];
@@ -593,6 +599,38 @@ const GLOBALS: &str = r#"
         const ok = !!predicate(received);
         check(ok, undefined, "toSatisfy");
       },
+      toBeTypeOf(t) {
+        check(typeof received === t, t, "toBeTypeOf");
+      },
+      toEqualTypeOf(_other) { /* TS type-only — pass at runtime */ },
+      toBeSymbol() { check(typeof received === "symbol", undefined, "toBeSymbol"); },
+      toBePrimitive() {
+        const t = typeof received;
+        check(t === "string" || t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || received === null || received === undefined, undefined, "toBePrimitive");
+      },
+      toBeNullish() { check(received === null || received === undefined, undefined, "toBeNullish"); },
+      toBeNonEmptyString() { check(typeof received === "string" && received.length > 0, undefined, "toBeNonEmptyString"); },
+      toHaveBeenCalled() {
+        check(received && received.mock && received.mock.calls && received.mock.calls.length > 0, undefined, "toHaveBeenCalled");
+      },
+      toHaveBeenCalledTimes(n) {
+        check(received && received.mock && received.mock.calls && received.mock.calls.length === n, n, "toHaveBeenCalledTimes");
+      },
+      toHaveBeenCalledWith(...args) {
+        const calls = (received && received.mock && received.mock.calls) || [];
+        const ok = calls.some(c => c.length === args.length && c.every((v, i) => deepEq(v, args[i])));
+        check(ok, args, "toHaveBeenCalledWith");
+      },
+      toHaveBeenLastCalledWith(...args) {
+        const calls = (received && received.mock && received.mock.calls) || [];
+        const last = calls[calls.length - 1] || [];
+        const ok = last.length === args.length && last.every((v, i) => deepEq(v, args[i]));
+        check(ok, args, "toHaveBeenLastCalledWith");
+      },
+      toHaveReturnedTimes(n) {
+        const results = (received && received.mock && received.mock.results) || [];
+        check(results.filter(r => r.type === "return").length === n, n, "toHaveReturnedTimes");
+      },
       // Resolves / rejects helpers used in older test styles.
       toResolve() {
         // Use the existing .resolves proxy.
@@ -735,6 +773,14 @@ const GLOBALS: &str = r#"
   };
   g.expect.assertions = function () {};
   g.expect.hasAssertions = function () {};
+  g.expect.unreachable = function () { throw new Error("expect.unreachable() reached"); };
+  g.expect.objectContaining = g.expect.objectContaining || ((sub) => asymmetric("ObjectContaining", a => Object.keys(sub).every(k => deepEq(a && a[k], sub[k]))));
+  g.expect.arrayContaining = g.expect.arrayContaining || ((sub) => asymmetric("ArrayContaining", a => Array.isArray(a) && sub.every(v => a.some(x => deepEq(x, v)))));
+  // expectTypeOf: TypeScript type-only assertions; runtime no-op chainable.
+  g.expectTypeOf = function (_x) {
+    const proxy = new Proxy(function(){}, { get: () => () => proxy, apply: () => proxy });
+    return proxy;
+  };
   g.expect.extend = function (matchers) {
     for (const [name, fn] of Object.entries(matchers)) {
       g.expect[name] = (...a) => asymmetric(name, (recv) => {
