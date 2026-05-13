@@ -42,3 +42,5 @@ uuid = { version = "1", features = ["v4"] }
 subtle = "2"
 pulldown-cmark = "0.13"
 serde_yaml = "0.9"
+croner = "3"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

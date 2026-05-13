@@ -73,6 +73,33 @@ pub fn install_bun(ctx: &Context) {
     file::install(ctx, &bun);
     serve::install(ctx, &bun);
 
+    // Bun.cron.parse — backed by croner. Given a cron expression and a
+    // start instant (or now), return the next firing instant as ISO string,
+    // or null if no future match (e.g., Feb 30).
+    bind(ctx, &bun, "__rust_cron_next", |args| {
+        use chrono::{TimeZone, Utc};
+        use croner::Cron;
+        let expr = args.get(0).to_string();
+        let from_ms = if args.len() >= 2 { args.get(1).to_number() } else { 0.0 };
+        let from = if from_ms.is_finite() && from_ms > 0.0 {
+            Utc.timestamp_millis_opt(from_ms as i64).single().unwrap_or_else(Utc::now)
+        } else {
+            Utc::now()
+        };
+        use std::str::FromStr;
+        let cron = match Cron::from_str(&expr) {
+            Ok(c) => c,
+            Err(e) => return Err(format!("cron parse error: {e}")),
+        };
+        match cron.find_next_occurrence(&from, false) {
+            Ok(next) => {
+                let iso = next.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                Ok(Value::new_string(args.context(), &iso))
+            }
+            Err(_) => Ok(Value::new_null(args.context())),
+        }
+    });
+
     // Bun.YAML — backed by serde_yaml. We parse to serde_yaml::Value, then
     // convert via serde_json to a JSON string, then JS-side JSON.parse.
     // This avoids manually mapping every YAML scalar shape to a JSC value.
@@ -293,8 +320,16 @@ const BUN_HELPERS: &str = r##"
   function _renderMarkdownHtml(src, opts) {
     const decoded = _decodeMdInput(src);
     let html = Bun.__rust_markdown_html(decoded);
-    if (opts && opts.headings && (opts.headings.ids || opts.headings.autolink)) {
-      html = _injectHeadingIds(html, !!opts.headings.autolink);
+    if (opts && opts.headings) {
+      // Shorthand: `headings: true` enables both ids + autolink.
+      // `headings: { ids: true }` → ids only.
+      // `headings: { ids: true, autolink: true }` → ids + autolink.
+      // `headings: { autolink: true }` (without ids) → no-op (matches Bun).
+      const ids = opts.headings === true || !!opts.headings.ids;
+      const autolink = opts.headings === true || (opts.headings.autolink && ids);
+      if (ids) {
+        html = _injectHeadingIds(html, autolink);
+      }
     }
     return html;
   }
@@ -1324,18 +1359,13 @@ const BUN_HELPERS: &str = r##"
   // ── Bun.cron (stub) ────────────────────────────────────────────────
   Bun.cron = function (_schedule, _handler) { return { stop: () => {} }; };
   Bun.cron.parse = function (expr, from) {
-    // Extremely-minimal cron parser: only "<min> <hour> * * *" supported.
-    const parts = String(expr).trim().split(/\s+/);
-    if (parts.length < 5) return null;
-    const m = +parts[0], h = +parts[1];
-    if (isNaN(m) || isNaN(h)) return null;
-    const start = from ? new Date(from) : new Date();
-    const d = new Date(Date.UTC(
-      start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate(),
-      h, m, 0, 0
-    ));
-    if (d <= start) d.setUTCDate(d.getUTCDate() + 1);
-    return d;
+    const fromMs = from ? (from instanceof Date ? from.getTime() : new Date(from).getTime()) : 0;
+    try {
+      const iso = Bun.__rust_cron_next(String(expr), fromMs);
+      return iso ? new Date(iso) : null;
+    } catch (e) {
+      return null;
+    }
   };
 
   // ── Bun.RegExp / Bun.escapeRegExp ──────────────────────────────────
