@@ -331,6 +331,9 @@ const GLOBALS: &str = r#"
   function curr() { return stack[stack.length - 1]; }
 
   g.describe = function (name, body) {
+    // Single-arg form: describe(fn) — anonymous suite.
+    if (typeof name === "function" && body === undefined) { body = name; name = ""; }
+    if (typeof body !== "function") return; // describe(name) with no body — no-op
     stack.push({
       path: [...curr().path, name],
       beforeAll: [...curr().beforeAll],
@@ -342,7 +345,8 @@ const GLOBALS: &str = r#"
   };
   // Variants Bun's tests use heavily:
   g.describe.skip = (name, body) => {
-    // Push a describe-level skip: all nested tests become skipped.
+    if (typeof name === "function" && body === undefined) { body = name; name = ""; }
+    if (typeof body !== "function") return;
     const top = curr();
     stack.push({
       path: [...top.path, name],
@@ -366,6 +370,11 @@ const GLOBALS: &str = r#"
     }
   };
   g.describe.concurrent = g.describe;
+  g.describe.serial = g.describe;
+  g.describe.failing = g.describe;
+  g.describe.concurrentIf = (cond) => (cond ? g.describe.concurrent : g.describe);
+  g.describe.serialIf = (cond) => (cond ? g.describe.serial : g.describe);
+  g.describe.failingIf = (cond) => (cond ? g.describe.failing : g.describe);
 
   function safeStringify(v) {
     try { return JSON.stringify(v); } catch { return String(v); }
@@ -410,6 +419,14 @@ const GLOBALS: &str = r#"
   g.test.concurrent.skip = g.test.skip;
   g.test.concurrent.only = g.test.only;
   g.test.concurrent.each = g.test.each;
+  g.test.concurrentIf = (cond) => (cond ? g.test.concurrent : g.test);
+  g.it.concurrentIf = g.test.concurrentIf;
+  g.test.serial = g.test;
+  g.it.serial = g.it;
+  g.test.serialIf = (cond) => (cond ? g.test.serial : g.test);
+  g.it.serialIf = g.it.serialIf;
+  g.test.failingIf = (cond) => (cond ? g.test.failing : g.test);
+  g.it.failingIf = g.test.failingIf;
   // .each pattern continues below
   g.test.each = (rows) => (name, fn) => {
     for (const row of rows) {
@@ -875,9 +892,15 @@ const GLOBALS: &str = r#"
   g.expect.objectContaining = g.expect.objectContaining || ((sub) => asymmetric("ObjectContaining", a => Object.keys(sub).every(k => deepEq(a && a[k], sub[k]))));
   g.expect.arrayContaining = g.expect.arrayContaining || ((sub) => asymmetric("ArrayContaining", a => Array.isArray(a) && sub.every(v => a.some(x => deepEq(x, v)))));
   // expectTypeOf: TypeScript type-only assertions; runtime no-op chainable.
+  // Both `.foo` and `.foo()` must yield another proxy, so the test author
+  // can write `expectTypeOf(x).parameters.toEqualTypeOf<...>()` etc.
   g.expectTypeOf = function (_x) {
-    const proxy = new Proxy(function(){}, { get: () => () => proxy, apply: () => proxy });
-    return proxy;
+    const make = () => new Proxy(function(){}, {
+      get: (_t, k) => k === Symbol.toPrimitive ? () => "" : make(),
+      apply: () => make(),
+      construct: () => ({}),
+    });
+    return make();
   };
   g.expect.extend = function (matchers) {
     for (const [name, fn] of Object.entries(matchers)) {

@@ -1617,6 +1617,8 @@ const BUN_HELPERS: &str = r##"
       afterEach: globalThis.afterEach,
       mock: globalThis.mock,
       spyOn: globalThis.spyOn,
+      jest: globalThis.jest,
+      vi: globalThis.vi || globalThis.jest,
     };
   };
 
