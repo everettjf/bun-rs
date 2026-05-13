@@ -791,6 +791,12 @@ const BUN_HELPERS: &str = r##"
   // Bun.color(input, format) — accept various inputs (hex, rgb obj, array,
   // CSS function strings) and emit in the requested format.
   Bun.color = function (input, format) {
+    if (arguments.length === 0) {
+      const err = new TypeError("Bun.color: expected at least 1 argument");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    const clamp = (n) => Math.max(0, Math.min(255, Math.round(n)));
     function parseRGBA(v) {
       // Returns {r, g, b, a} or null
       if (v == null) return null;
@@ -851,8 +857,9 @@ const BUN_HELPERS: &str = r##"
     }
     const rgba = parseRGBA(input);
     if (!rgba) return null;
-    const fmt = format == null ? "{rgb}" : String(format);
-    const { r, g, b, a } = rgba;
+    const fmt = format == null ? "css" : String(format);
+    // Clamp all channels into [0, 255].
+    const r = clamp(rgba.r), g = clamp(rgba.g), b = clamp(rgba.b), a = rgba.a;
     const hex2 = (n) => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, "0");
     switch (fmt) {
       case "{rgb}": return { r, g, b };
@@ -874,8 +881,8 @@ const BUN_HELPERS: &str = r##"
       case "ansi-16m":
       case "ansi-24bit":
         return `\x1b[38;2;${r};${g};${b}m`;
-      case "ansi-256": {
-        // 6x6x6 cube approximation.
+      case "ansi-256":
+      case "ansi256": {
         const cube = (n) => Math.round(n / 51);
         const code = 16 + 36 * cube(r) + 6 * cube(g) + cube(b);
         return `\x1b[38;5;${code}m`;
@@ -886,10 +893,22 @@ const BUN_HELPERS: &str = r##"
         const code = bright + (r > 127 ? 1 : 0) + (g > 127 ? 2 : 0) + (b > 127 ? 4 : 0);
         return `\x1b[${code}m`;
       }
-      case "css":
+      case "css": {
+        // CSS named color shortcuts.
+        const namedRev = {
+          "0,0,0":"#000","255,255,255":"#fff",
+          "255,0,0":"red","0,128,0":"green","0,0,255":"blue",
+          "255,255,0":"yellow","0,255,255":"cyan","255,0,255":"magenta",
+          "128,0,128":"purple","255,165,0":"orange",
+        };
+        const key = `${r},${g},${b}`;
+        if (a === 1 && namedRev[key]) return namedRev[key];
+        // Otherwise emit hex when alpha is 1, else rgba.
+        if (a === 1) return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+        return `rgba(${r}, ${g}, ${b}, ${a})`;
+      }
       case "HSL":
-      case "hsl":
-        // Convert RGB → HSL.
+      case "hsl": {
         const rN = r / 255, gN = g / 255, bN = b / 255;
         const mx = Math.max(rN, gN, bN), mn = Math.min(rN, gN, bN);
         let h = 0, s = 0, l = (mx + mn) / 2;
@@ -902,6 +921,7 @@ const BUN_HELPERS: &str = r##"
           h *= 60;
         }
         return `hsl(${Math.round(h)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+      }
       default:
         return null;
     }

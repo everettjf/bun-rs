@@ -480,10 +480,19 @@ const GLOBALS: &str = r#"
       toThrow(matcher) {
         let caught;
         try { received(); } catch (e) { caught = e; }
-        const matched = !!caught && (matcher === undefined ||
-          (matcher instanceof RegExp ? matcher.test(caught.message || String(caught)) :
-           typeof matcher === "string" ? (caught.message || String(caught)).includes(matcher) :
-           typeof matcher === "function" ? caught instanceof matcher : false));
+        const matched = !!caught && (
+          matcher === undefined
+          // Asymmetric matchers (expect.objectContaining etc.)
+          || (matcher && matcher.__bun_match && typeof matcher.asymmetricMatch === "function" && matcher.asymmetricMatch(caught))
+          || (matcher instanceof RegExp ? matcher.test(caught.message || String(caught))
+            : typeof matcher === "string" ? (caught.message || String(caught)).includes(matcher)
+            : typeof matcher === "function" ? caught instanceof matcher
+            // Plain object: shape-match against caught.
+            : (matcher && typeof matcher === "object") ? (
+                Object.keys(matcher).every(k => deepEq(caught[k], matcher[k]))
+              )
+            : false)
+        );
         check(matched, matcher, "toThrow");
       },
       toBeInstanceOf(cls) { check(received instanceof cls, cls.name, "toBeInstanceOf"); },
