@@ -46,6 +46,12 @@ const POLYFILL: &str = r#"
         const buf = new Buffer(value.buffer, value.byteOffset, value.byteLength);
         return buf;
       }
+      if (ArrayBuffer.isView(value)) {
+        // Any other typed array (Uint16Array, Int32Array, etc.) — copy
+        // the raw bytes of the underlying buffer.
+        const buf = new Buffer(value.buffer, value.byteOffset, value.byteLength);
+        return buf;
+      }
       if (Array.isArray(value)) {
         const buf = new Buffer(value.length);
         for (let i = 0; i < value.length; i++) buf[i] = value[i] & 0xff;
@@ -60,6 +66,12 @@ const POLYFILL: &str = r#"
       }
       if (typeof value === "number") {
         throw new TypeError("Buffer.from(number) is not supported; use Buffer.alloc(n)");
+      }
+      // Array-like with length: copy bytes.
+      if (value && typeof value === "object" && typeof value.length === "number") {
+        const buf = new Buffer(value.length);
+        for (let i = 0; i < value.length; i++) buf[i] = (value[i] | 0) & 0xff;
+        return buf;
       }
       throw new TypeError("Unsupported Buffer.from input: " + typeof value);
     }

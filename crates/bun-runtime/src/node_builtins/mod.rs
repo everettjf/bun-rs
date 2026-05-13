@@ -77,6 +77,12 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "dns" | "node:dns" => build_dns_stub,
         "dns/promises" | "node:dns/promises" => build_dns_promises_stub,
         "dgram" | "node:dgram" => build_dgram_stub,
+        "vm" | "node:vm" => build_vm_stub,
+        "punycode" | "node:punycode" => build_punycode_stub,
+        "tls" | "node:tls" => build_tls_stub,
+        "trace_events" | "node:trace_events" => build_trace_events_stub,
+        "inspector" | "node:inspector" => build_inspector_stub,
+        "wasi" | "node:wasi" => build_wasi_stub,
         "https" | "node:https" => http::build,
         _ => return None,
     };
@@ -340,6 +346,110 @@ fn build_dns_promises_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             resolve6: async (_h) => ["::1"],
         })"#,
         Some("[node:dns/promises]"),
+    )
+    .unwrap()
+}
+
+fn build_vm_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            // Use JSC's eval / Function constructor for the sandbox features.
+            runInNewContext(code, _ctx, _opts) {
+                return Function("return (" + String(code) + ")")();
+            },
+            runInThisContext(code, _opts) {
+                return Function("return (" + String(code) + ")")();
+            },
+            runInContext(code, _ctx, _opts) {
+                return Function("return (" + String(code) + ")")();
+            },
+            createContext(obj) { return obj || {}; },
+            isContext: (_x) => false,
+            compileFunction(code, params, _opts) {
+                return new Function(...(params || []), code);
+            },
+            Script: class Script {
+                constructor(code, _opts) { this._code = String(code); }
+                runInThisContext() { return Function("return (" + this._code + ")")(); }
+                runInNewContext(_ctx) { return this.runInThisContext(); }
+                runInContext(_ctx) { return this.runInThisContext(); }
+                createCachedData() { return new Uint8Array(0); }
+            },
+            constants: {},
+        })"#,
+        Some("[node:vm]"),
+    )
+    .unwrap()
+}
+
+fn build_punycode_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            decode: (s) => String(s),
+            encode: (s) => String(s),
+            toASCII: (s) => String(s),
+            toUnicode: (s) => String(s),
+            ucs2: { decode: (s) => Array.from(String(s)).map(c => c.codePointAt(0)), encode: (a) => String.fromCodePoint(...a) },
+        })"#,
+        Some("[node:punycode]"),
+    )
+    .unwrap()
+}
+
+fn build_tls_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            createServer: () => { throw new Error("node:tls createServer not implemented"); },
+            connect: () => { throw new Error("node:tls connect not implemented"); },
+            createSecureContext: (opts) => opts || {},
+            checkServerIdentity: () => undefined,
+            DEFAULT_ECDH_CURVE: "auto",
+            DEFAULT_MAX_VERSION: "TLSv1.3",
+            DEFAULT_MIN_VERSION: "TLSv1.2",
+            CLIENT_RENEG_LIMIT: 3,
+            CLIENT_RENEG_WINDOW: 600,
+            rootCertificates: [],
+        })"#,
+        Some("[node:tls]"),
+    )
+    .unwrap()
+}
+
+fn build_trace_events_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            createTracing: () => ({ enable() {}, disable() {} }),
+            getEnabledCategories: () => "",
+        })"#,
+        Some("[node:trace_events]"),
+    )
+    .unwrap()
+}
+
+fn build_inspector_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            open: () => {}, close: () => {}, url: () => undefined,
+            console: globalThis.console,
+            Session: class { constructor(){}; connect(){}; disconnect(){}; on(){}; off(){}; post(){} },
+        })"#,
+        Some("[node:inspector]"),
+    )
+    .unwrap()
+}
+
+fn build_wasi_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            WASI: class { constructor(){}; start(){ return 0; } initialize(){} getImportObject(){return {};} },
+        })"#,
+        Some("[node:wasi]"),
     )
     .unwrap()
 }
