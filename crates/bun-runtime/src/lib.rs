@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use bun_jsc::{Callback, Context, JsException, Value};
 
 mod async_rt;
+mod babel_helpers;
 mod buffer;
 mod bun_api;
 mod console;
@@ -42,6 +43,7 @@ impl Runtime {
         install_console(&ctx);
         install_process(&ctx, argv);
         install_timers(&ctx);
+        babel_helpers::install(&ctx);
         install_module_loader(&ctx);
         web::install_web(&ctx);
         buffer::install(&ctx);

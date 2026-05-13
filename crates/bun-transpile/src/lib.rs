@@ -10,7 +10,10 @@ use oxc_codegen::Codegen;
 use oxc_parser::Parser;
 use oxc_semantic::SemanticBuilder;
 use oxc_span::SourceType;
-use oxc_transformer::{JsxOptions, JsxRuntime, TransformOptions, Transformer};
+use oxc_transformer::{
+    ES2026Options, EnvOptions, HelperLoaderMode, HelperLoaderOptions, JsxOptions, JsxRuntime,
+    TransformOptions, Transformer,
+};
 
 use thiserror::Error;
 
@@ -42,8 +45,15 @@ pub fn transpile(
 ) -> Result<Transpiled, TranspileError> {
     let allocator = Allocator::default();
 
-    // Plain JS with no JSX / TS → no work to do.
-    if !source_type.is_typescript() && !source_type.is_jsx() {
+    // Plain JS with no JSX / TS → only run the transformer if the source uses
+    // a feature JSC doesn't accept yet (today: `using` / `await using` from
+    // ES2026 explicit resource management). Everything else is passthrough so
+    // we don't pay the codegen cost on a typical .js file.
+    let needs_explicit_resource_lowering = source_uses_using(source);
+    if !source_type.is_typescript()
+        && !source_type.is_jsx()
+        && !needs_explicit_resource_lowering
+    {
         return Ok(Transpiled { code: source.to_owned() });
     }
 
@@ -73,6 +83,24 @@ pub fn transpile(
         runtime: JsxRuntime::Classic,
         ..JsxOptions::default()
     };
+    // Always lower `using` declarations so JSC's parser (which rejects them)
+    // never sees them. Safe even when the source doesn't use `using`.
+    options.env = EnvOptions {
+        es2026: ES2026Options { explicit_resource_management: true },
+        ..options.env
+    };
+    // Inline transformer helpers so the output is self-contained — we don't
+    // ship `@oxc-project/runtime`, and dragging it through `require` resolution
+    // for every TS file would be both fragile and slow.
+    // External mode: helpers come from a global `babelHelpers` object that
+    // the runtime installs at startup. (oxc's `Inline` mode is "not
+    // supported yet" as of 0.129.) Letting it default to `Runtime` would
+    // emit `require("@oxc-project/runtime/helpers/…")` and force every
+    // transpiled file to pull a node_modules dependency we don't ship.
+    options.helper_loader = HelperLoaderOptions {
+        mode: HelperLoaderMode::External,
+        ..HelperLoaderOptions::default()
+    };
     let result = Transformer::new(&allocator, Path::new(source_name), &options)
         .build_with_scoping(scoping, &mut program);
 
@@ -88,6 +116,23 @@ pub fn transpile(
 
     let code = Codegen::new().build(&program).code;
     Ok(Transpiled { code })
+}
+
+// Word-boundary check for `using ` / `await using ` so a variable named
+// `usingThis` doesn't trip the slow path.
+fn source_uses_using(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    for (i, _) in source.match_indices("using ") {
+        let prev_ok = i == 0
+            || matches!(
+                bytes[i - 1],
+                b' ' | b'\t' | b'\n' | b'\r' | b'{' | b'}' | b';' | b'('
+            );
+        if prev_ok {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -216,5 +261,35 @@ mod tests {
     fn empty_file_returns_empty_or_minimal() {
         let out = transpile_file(Path::new("a.ts"), "").unwrap();
         assert!(out.code.trim().is_empty() || out.code.len() < 5);
+    }
+
+    #[test]
+    fn using_declaration_is_lowered_to_try_finally() {
+        let src = "function f() { using x = { [Symbol.dispose]() {} }; }";
+        let out = transpile_file(Path::new("/tmp/u.ts"), src).unwrap();
+        // The `using` keyword should be gone — replaced with babelHelpers.usingCtx.
+        assert!(!out.code.contains("using x"));
+        assert!(out.code.contains("babelHelpers.usingCtx"));
+        // The transformer wraps the body in try/finally with .d() dispose call.
+        assert!(out.code.contains("finally"));
+        assert!(out.code.contains(".d()"));
+    }
+
+    #[test]
+    fn await_using_lowered() {
+        let src = "async function f() { await using x = { async [Symbol.asyncDispose]() {} }; }";
+        let out = transpile_file(Path::new("/tmp/u.ts"), src).unwrap();
+        assert!(!out.code.contains("await using"));
+        assert!(out.code.contains("babelHelpers.usingCtx"));
+    }
+
+    #[test]
+    fn variable_named_using_is_not_treated_as_keyword() {
+        // The slow-path detector uses word-boundary checks so plain identifiers
+        // named `using` don't trigger the heavier transformer path.
+        let src = "const usingThis = 1; console.log(usingThis);";
+        let out = transpile_file(Path::new("a.js"), src).unwrap();
+        // JS passthrough: code is unchanged.
+        assert_eq!(out.code, src);
     }
 }
