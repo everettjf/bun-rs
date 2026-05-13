@@ -377,11 +377,24 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
         .expect("set url");
     obj.set_property("main", &Value::new_bool(ctx, false))
         .expect("set main");
-    // Spec also defines `dirname`/`filename` in Node ≥ 21.2.
-    obj.set_property("dirname", &Value::new_string(ctx, abs.parent().map_or("", |p| p.to_str().unwrap_or(""))))
+    // Spec defines `dirname`/`filename` (Node ≥ 21.2); Bun adds `dir`/`file`/`path`.
+    let dirname = abs.parent().map_or("", |p| p.to_str().unwrap_or("")).to_string();
+    let filename = abs.to_str().unwrap_or("").to_string();
+    let file_base = abs.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    obj.set_property("dirname", &Value::new_string(ctx, &dirname))
         .expect("set dirname");
-    obj.set_property("filename", &Value::new_string(ctx, abs.to_str().unwrap_or("")))
+    obj.set_property("dir", &Value::new_string(ctx, &dirname))
+        .expect("set dir");
+    obj.set_property("filename", &Value::new_string(ctx, &filename))
         .expect("set filename");
+    obj.set_property("path", &Value::new_string(ctx, &filename))
+        .expect("set path");
+    obj.set_property("file", &Value::new_string(ctx, &file_base))
+        .expect("set file");
+    // Bun-specific: env, resolveSync, resolve, require (per-module).
+    let env_v = ctx.eval("({...process.env})", Some("[import.meta.env]"))
+        .unwrap_or_else(|_| Value::new_undefined(ctx));
+    obj.set_property("env", &env_v).ok();
     obj.as_value()
 }
 

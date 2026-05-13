@@ -45,7 +45,9 @@ while IFS= read -r f; do
     echo "[harness]   $i/$TOTAL …" >&2
   fi
   rel="${f#$BUN_TESTS/}"
-  out=$(perl -e 'alarm shift; exec @ARGV' "$TIMEOUT_SEC" "$BUN_RS" test "$f" 2>&1)
+  # </dev/null on stdin so the inner command can't steal lines from the
+  # `while read` loop driving us.
+  out=$(perl -e 'alarm shift; exec @ARGV' "$TIMEOUT_SEC" "$BUN_RS" test "$f" </dev/null 2>&1)
   rc=$?
 
   status=""

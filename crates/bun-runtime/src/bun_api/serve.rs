@@ -206,6 +206,28 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         obj.set_property("stop", &stop_cb.value_in(ctx)).unwrap();
         std::mem::forget(stop_cb);
 
+        // Make .url a URL object (Bun does this — tests access .url.host,
+        // .url.protocol, etc.). Also install Symbol.dispose / .asyncDispose
+        // so `using server = Bun.serve(...)` cleans up automatically.
+        let _ = ctx.eval(
+            &format!(
+                r#"(function(s){{
+                    try {{ s.url = new URL("http://localhost:{port}/"); }} catch {{}}
+                    Object.defineProperty(s, Symbol.dispose, {{ value: () => s.stop(true), configurable: true }});
+                    Object.defineProperty(s, Symbol.asyncDispose, {{ value: async () => s.stop(true), configurable: true }});
+                    s.ref = () => {{}};
+                    s.unref = () => {{}};
+                    s.reload = () => {{}};
+                    s.development = false;
+                    s.address = {{ family: "IPv4", address: "127.0.0.1", port: {port} }};
+                    return s;
+                }})"#,
+                port = resolved_port,
+            ),
+            Some("[serve-augment]"),
+        )
+        .and_then(|f| f.to_object().and_then(|o| o.call(None, &[v])));
+
         Ok(v)
     });
 }

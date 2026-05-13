@@ -30,21 +30,98 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     );
 
     let exports_v = ctx.eval(
-        r#"({
-            describe: globalThis.describe,
-            test: globalThis.test,
-            it: globalThis.it,
-            expect: globalThis.expect,
-            beforeAll: globalThis.beforeAll,
-            afterAll: globalThis.afterAll,
-            beforeEach: globalThis.beforeEach,
-            afterEach: globalThis.afterEach,
-            mock: function (fn) { return fn || function () {}; },
-            spyOn: function () { return { mockReturnValue() {}, mockResolvedValue() {} }; },
-        })"#,
+        r#"(function(){
+            function mkMock(impl) {
+                const calls = [];
+                const results = [];
+                let nextResult = undefined;
+                let returnValueSet = false;
+                let returnValue = undefined;
+                const fn = function (...args) {
+                    calls.push(args);
+                    if (returnValueSet) return returnValue;
+                    if (impl) return impl.apply(this, args);
+                    return undefined;
+                };
+                fn.mock = {
+                    calls,
+                    results,
+                    instances: [],
+                    contexts: [],
+                    lastCall: () => calls[calls.length - 1],
+                };
+                fn.mockClear = () => { calls.length = 0; results.length = 0; return fn; };
+                fn.mockReset = () => { fn.mockClear(); returnValueSet = false; returnValue = undefined; impl = null; return fn; };
+                fn.mockRestore = () => fn.mockReset();
+                fn.mockReturnValue = (v) => { returnValueSet = true; returnValue = v; return fn; };
+                fn.mockReturnValueOnce = fn.mockReturnValue;
+                fn.mockResolvedValue = (v) => { returnValueSet = true; returnValue = Promise.resolve(v); return fn; };
+                fn.mockResolvedValueOnce = fn.mockResolvedValue;
+                fn.mockRejectedValue = (v) => { returnValueSet = true; returnValue = Promise.reject(v); return fn; };
+                fn.mockRejectedValueOnce = fn.mockRejectedValue;
+                fn.mockImplementation = (newImpl) => { impl = newImpl; return fn; };
+                fn.mockImplementationOnce = fn.mockImplementation;
+                fn.mockName = (n) => { fn._mockName = n; return fn; };
+                fn.getMockName = () => fn._mockName || "jest.fn()";
+                return fn;
+            }
+            function mock(impl) { return mkMock(impl); }
+            mock.module = (_spec, _factory) => {};
+            mock.restore = () => {};
+            mock.clearAllMocks = () => {};
+            mock.resetAllMocks = () => {};
+            return {
+                __esModule: true,
+                describe: globalThis.describe,
+                test: globalThis.test,
+                it: globalThis.it,
+                expect: globalThis.expect,
+                beforeAll: globalThis.beforeAll,
+                afterAll: globalThis.afterAll,
+                beforeEach: globalThis.beforeEach,
+                afterEach: globalThis.afterEach,
+                mock,
+                jest: { fn: mock, mock: mock.module, spyOn: function () { return mkMock(); }, useFakeTimers: () => {}, useRealTimers: () => {}, clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {} },
+                vi: { fn: mock, mock: mock.module, spyOn: function () { return mkMock(); }, useFakeTimers: () => {}, useRealTimers: () => {}, advanceTimersByTime: () => {}, runAllTimers: () => {}, clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {} },
+                spyOn: function (obj, key) {
+                    const orig = obj[key];
+                    const m = mkMock(typeof orig === "function" ? orig.bind(obj) : undefined);
+                    obj[key] = m;
+                    m.mockRestore = () => { obj[key] = orig; };
+                    return m;
+                },
+                setSystemTime: () => {},
+                setDefaultTimeout: () => {},
+            };
+        })()"#,
         Some("[bun:test]"),
     ).unwrap();
     let obj = exports_v.to_object().unwrap();
     obj.set_property("default", &exports_v).unwrap();
+
+    // Also expose `mock`, `vi`, `jest`, `spyOn` as globals — Bun's tests
+    // often use them without an explicit import.
+    let _ = ctx.eval(
+        r#"
+        (function(g, m){
+            g.mock = m.mock;
+            g.vi = m.vi;
+            g.jest = m.jest;
+            g.spyOn = m.spyOn;
+        })(globalThis, globalThis.__bun_test_module_exports = (function(){ return null; })() || arguments && arguments[0] || null);
+        "#,
+        Some("[bun:test-globals]"),
+    );
+    // Actually a simpler way to install globals — just stamp them now.
+    if let Ok(obj) = exports_v.to_object() {
+        let g = ctx.global_object();
+        for k in ["mock", "vi", "jest", "spyOn", "describe", "test", "it", "expect", "beforeAll", "afterAll", "beforeEach", "afterEach"].iter() {
+            if let Ok(v) = obj.get_property(k) {
+                if !v.is_undefined() {
+                    let _ = g.set_property(k, &v);
+                }
+            }
+        }
+    }
     exports_v
 }

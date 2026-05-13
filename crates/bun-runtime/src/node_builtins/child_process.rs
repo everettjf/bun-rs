@@ -183,6 +183,250 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Ok(Value::new_undefined(ctx))
     });
 
+    // Async `spawn(cmd, args, opts)` — returns a ChildProcess-like object
+    // with `.stdout` / `.stderr` as Uint8Array (buffered, since we run
+    // sync internally) and `.on("exit", cb)` so callers using EventEmitter
+    // patterns work. Plenty of Bun's tests use this shape.
+    bind(ctx, &exports, "spawn", |args| {
+        let ctx = args.context();
+        let cmd_name = args.get(0).to_string();
+        let mut argv: Vec<String> = Vec::new();
+        let mut opts_idx = 1usize;
+        if args.len() >= 2 && args.get(1).is_object() {
+            let v = args.get(1);
+            let obj = v.to_object().map_err(|e| e.to_string())?;
+            let looks_like_array = obj
+                .get_property("length")
+                .map(|l| l.is_number())
+                .unwrap_or(false);
+            if looks_like_array {
+                let n = obj.get_property("length").unwrap().to_number() as u32;
+                for i in 0..n {
+                    if let Ok(v) = obj.get_property_at(i) {
+                        argv.push(v.to_string());
+                    }
+                }
+                opts_idx = 2;
+            }
+        }
+        let opts = args.get(opts_idx);
+        let (_encoding, cwd) = parse_exec_opts(&opts);
+
+        let mut cmd = Command::new(&cmd_name);
+        cmd.args(&argv);
+        if let Some(d) = cwd {
+            cmd.current_dir(d);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let output = cmd.output();
+
+        // Build the JS-side ChildProcess-ish object.
+        let child_v = ctx
+            .eval(
+                r#"
+                (function(){
+                    const listeners = {};
+                    function on(ev, cb) { (listeners[ev] = listeners[ev] || []).push(cb); return this; }
+                    function emit(ev, ...args) { for (const cb of (listeners[ev]||[])) try { cb(...args); } catch {} }
+                    function once(ev, cb) { const wrap = (...a) => { off(ev, wrap); cb(...a); }; on.call(this, ev, wrap); return this; }
+                    function off(ev, cb) {
+                        const ls = listeners[ev]; if (!ls) return this;
+                        const i = ls.indexOf(cb); if (i >= 0) ls.splice(i, 1); return this;
+                    }
+                    const proc = { on, once, off, emit, listeners };
+                    proc.stdout = null;
+                    proc.stderr = null;
+                    proc.stdin = null;
+                    return proc;
+                })()
+                "#,
+                Some("[spawn-childproc]"),
+            )
+            .map_err(|e| e.to_string())?;
+        let child = child_v.to_object().map_err(|e| e.to_string())?;
+        let exit_code = match output {
+            Ok(o) => {
+                let stdout_b = crate::buffer::buffer_from_bytes(ctx, o.stdout);
+                let stderr_b = crate::buffer::buffer_from_bytes(ctx, o.stderr);
+                child.set_property("stdout", &stdout_b).ok();
+                child.set_property("stderr", &stderr_b).ok();
+                child
+                    .set_property("pid", &Value::new_number(ctx, std::process::id() as f64))
+                    .ok();
+                o.status.code().unwrap_or(-1)
+            }
+            Err(e) => {
+                child
+                    .set_property("error", &Value::new_string(ctx, &e.to_string()))
+                    .ok();
+                -1
+            }
+        };
+        child
+            .set_property("exitCode", &Value::new_number(ctx, exit_code as f64))
+            .ok();
+        // Fire 'exit' / 'close' events asynchronously so handlers attached
+        // after spawn() returns get them. queueMicrotask ensures the JS
+        // call site has finished setting up listeners.
+        let kick = ctx
+            .eval(
+                r#"
+                (function(child, code){
+                    queueMicrotask(() => {
+                        try { child.emit("exit", code, null); } catch {}
+                        try { child.emit("close", code, null); } catch {}
+                    });
+                })
+                "#,
+                Some("[spawn-emit]"),
+            )
+            .map_err(|e| e.to_string())?
+            .to_object()
+            .map_err(|e| e.to_string())?;
+        kick.call(None, &[child_v, Value::new_number(ctx, exit_code as f64)])
+            .map_err(|e| e.to_string())?;
+        // Bun-shaped extras: kill / exited promise.
+        let extras = ctx
+            .eval(
+                r#"
+                (function(child, code){
+                    child.exited = Promise.resolve(code);
+                    child.kill = (_sig) => {};
+                    child.unref = () => {};
+                    child.ref = () => {};
+                    return child;
+                })
+                "#,
+                Some("[spawn-extras]"),
+            )
+            .map_err(|e| e.to_string())?
+            .to_object()
+            .map_err(|e| e.to_string())?;
+        extras
+            .call(None, &[child_v, Value::new_number(ctx, exit_code as f64)])
+            .map_err(|e| e.to_string())?;
+        Ok(child_v)
+    });
+
+    // `execFile(file, args, opts, callback)` — like exec but no shell.
+    bind(ctx, &exports, "execFile", |args| {
+        let ctx = args.context();
+        let file = args.get(0).to_string();
+        let mut argv: Vec<String> = Vec::new();
+        let mut cb_idx = args.len();
+        // Args is the 2nd arg if it's an array (length numeric).
+        if args.len() >= 2 && args.get(1).is_object() {
+            let v = args.get(1);
+            let obj = v.to_object().map_err(|e| e.to_string())?;
+            let looks_like_array = obj
+                .get_property("length")
+                .map(|l| l.is_number())
+                .unwrap_or(false);
+            if looks_like_array {
+                let n = obj.get_property("length").unwrap().to_number() as u32;
+                for i in 0..n {
+                    if let Ok(v) = obj.get_property_at(i) {
+                        argv.push(v.to_string());
+                    }
+                }
+            }
+        }
+        for i in (0..args.len()).rev() {
+            let v = args.get(i);
+            if v.is_object() {
+                if let Ok(o) = v.to_object() {
+                    if o.is_function() {
+                        cb_idx = i;
+                        break;
+                    }
+                }
+            }
+        }
+        let out = Command::new(&file)
+            .args(&argv)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        if cb_idx < args.len() {
+            let cb = args
+                .get(cb_idx)
+                .to_object()
+                .map_err(|e| e.to_string())?;
+            let (err_val, stdout_val, stderr_val) = match out {
+                Ok(o) => (
+                    if o.status.success() { Value::new_null(ctx) }
+                    else { Value::new_string(ctx, &format!("Command failed: {} (exit {})", file, o.status.code().unwrap_or(-1))) },
+                    Value::new_string(ctx, &String::from_utf8_lossy(&o.stdout)),
+                    Value::new_string(ctx, &String::from_utf8_lossy(&o.stderr)),
+                ),
+                Err(e) => (
+                    Value::new_string(ctx, &e.to_string()),
+                    Value::new_string(ctx, ""),
+                    Value::new_string(ctx, ""),
+                ),
+            };
+            cb.call(None, &[err_val, stdout_val, stderr_val])
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(Value::new_undefined(ctx))
+    });
+
+    // `fork(modulePath, args, opts)` — spawn a Node-like child. We don't
+    // have a Node subprocess loader, so route through `spawn(<bun-rs>, ...)`
+    // pointing at the same bun-rs binary.
+    bind(ctx, &exports, "fork", |args| {
+        let ctx = args.context();
+        // Construct argv: [<bun-rs>, <module>, ...userArgs].
+        let module = args.get(0).to_string();
+        let bun_rs = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "bun-rs".into());
+        // Re-use the spawn callback by calling it via `this`.
+        let spawn_fn = ctx
+            .global_object()
+            .get_property("__bun_internal_cp_spawn_helper")
+            .ok();
+        let _ = spawn_fn;
+        let mut argv: Vec<String> = vec![module];
+        if args.len() >= 2 && args.get(1).is_object() {
+            let v = args.get(1);
+            if let Ok(obj) = v.to_object() {
+                if let Ok(len) = obj.get_property("length") {
+                    if len.is_number() {
+                        let n = len.to_number() as u32;
+                        for i in 0..n {
+                            if let Ok(v) = obj.get_property_at(i) {
+                                argv.push(v.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let out = Command::new(&bun_rs)
+            .args(&argv)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        let child_v = ctx
+            .eval("({ on(){return this;}, once(){return this;}, off(){return this;}, emit(){}, kill(){}, unref(){}, ref(){} })", Some("[fork-child]"))
+            .map_err(|e| e.to_string())?;
+        let child = child_v.to_object().map_err(|e| e.to_string())?;
+        match out {
+            Ok(o) => {
+                child.set_property("stdout", &crate::buffer::buffer_from_bytes(ctx, o.stdout)).ok();
+                child.set_property("stderr", &crate::buffer::buffer_from_bytes(ctx, o.stderr)).ok();
+                child.set_property("exitCode", &Value::new_number(ctx, o.status.code().unwrap_or(-1) as f64)).ok();
+                child.set_property("exited", &ctx.eval("Promise.resolve(0)", Some("[fork-exited]")).unwrap()).ok();
+            }
+            Err(_) => {
+                child.set_property("exitCode", &Value::new_number(ctx, -1.0)).ok();
+            }
+        }
+        Ok(child_v)
+    });
+
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
 }

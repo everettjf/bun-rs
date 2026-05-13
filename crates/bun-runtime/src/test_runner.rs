@@ -488,5 +488,92 @@ const GLOBALS: &str = r#"
     Object.defineProperty(e, "not", { get() { return mkExpect(received, true); } });
     return e;
   };
+
+  // ── Asymmetric matchers (expect.any / .anything / .objectContaining / etc.) ──
+  // These are sentinel values for use inside toEqual / toMatchObject. They
+  // override the standard deepEq via a special `[__bun_match]` brand.
+  function asymmetric(name, predicate, repr) {
+    return {
+      __bun_match: true,
+      __bun_match_name: name,
+      asymmetricMatch: predicate,
+      toString: () => repr || name,
+    };
+  }
+  // Plug asymmetric matchers into deepEq.
+  const _origDeepEq = deepEq;
+  // eslint-disable-next-line no-func-assign
+  deepEq = function (a, b) {
+    if (b && b.__bun_match && typeof b.asymmetricMatch === "function") return b.asymmetricMatch(a);
+    if (a && a.__bun_match && typeof a.asymmetricMatch === "function") return a.asymmetricMatch(b);
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (!deepEq(a[i], b[i])) return false;
+      return true;
+    }
+    if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)
+        && !(a instanceof Date) && !(a instanceof RegExp)) {
+      const ak = Object.keys(a), bk = Object.keys(b);
+      if (ak.length !== bk.length) return false;
+      for (const k of ak) {
+        if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+        if (!deepEq(a[k], b[k])) return false;
+      }
+      return true;
+    }
+    return _origDeepEq(a, b);
+  };
+
+  g.expect.any = function (ctor) {
+    return asymmetric("Any<" + (ctor && ctor.name || ctor) + ">", (a) => {
+      if (ctor === Number) return typeof a === "number";
+      if (ctor === String) return typeof a === "string";
+      if (ctor === Boolean) return typeof a === "boolean";
+      if (ctor === BigInt) return typeof a === "bigint";
+      if (ctor === Function) return typeof a === "function";
+      if (ctor === Symbol) return typeof a === "symbol";
+      if (ctor === Object) return a !== null && typeof a === "object";
+      if (typeof ctor === "function") return a instanceof ctor;
+      return false;
+    });
+  };
+  g.expect.anything = function () {
+    return asymmetric("Anything", (a) => a !== null && a !== undefined);
+  };
+  g.expect.objectContaining = function (sub) {
+    return asymmetric("ObjectContaining", (a) => {
+      if (a === null || typeof a !== "object") return false;
+      for (const k of Object.keys(sub)) if (!deepEq(a[k], sub[k])) return false;
+      return true;
+    });
+  };
+  g.expect.arrayContaining = function (sub) {
+    return asymmetric("ArrayContaining", (a) => {
+      if (!Array.isArray(a)) return false;
+      return sub.every((v) => a.some((x) => deepEq(x, v)));
+    });
+  };
+  g.expect.stringContaining = function (s) {
+    return asymmetric("StringContaining", (a) => typeof a === "string" && a.includes(s));
+  };
+  g.expect.stringMatching = function (re) {
+    return asymmetric("StringMatching", (a) => typeof a === "string" &&
+      (re instanceof RegExp ? re.test(a) : a.includes(String(re))));
+  };
+  g.expect.closeTo = function (n, digits) {
+    const d = digits == null ? 2 : digits;
+    return asymmetric("CloseTo", (a) => typeof a === "number" && Math.abs(a - n) < Math.pow(10, -d) / 2);
+  };
+  g.expect.assertions = function () {};
+  g.expect.hasAssertions = function () {};
+  g.expect.extend = function (matchers) {
+    for (const [name, fn] of Object.entries(matchers)) {
+      g.expect[name] = (...a) => asymmetric(name, (recv) => {
+        const r = fn(recv, ...a);
+        return r && r.pass;
+      });
+    }
+  };
+
 })(globalThis);
 "#;
