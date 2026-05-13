@@ -3,3 +3,9 @@
 Cargo.lock.bak
 .DS_Store
 *.profraw
+.claude
+[object
+hello
+invalid.css
+mydb.sqlite
+*.sqlite

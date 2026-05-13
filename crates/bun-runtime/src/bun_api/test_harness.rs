@@ -56,14 +56,18 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             tempDir: (label, files) => {{
                 const fs = require("node:fs"); const path = require("node:path");
                 void fs; void path;
-                const base = "{tmp}" + "/bunrs-harness-" + (label || "x") + "-" + Date.now();
+                const base = "{tmp}" + "/bunrs-harness-" + (label || "x") + "-" + Date.now() + "-" + Math.random().toString(36).slice(2);
                 require("node:fs").mkdirSync(base, {{ recursive: true }});
                 if (files) for (const [name, content] of Object.entries(files)) {{
                     const p = require("node:path").join(base, name);
                     require("node:fs").mkdirSync(require("node:path").dirname(p), {{ recursive: true }});
                     require("node:fs").writeFileSync(p, content);
                 }}
-                return {{ path: base, toString: () => base }};
+                const dispose = () => {{ try {{ require("node:fs").rmSync(base, {{ recursive: true, force: true }}); }} catch {{}} }};
+                const obj = {{ path: base, toString: () => base, valueOf: () => base }};
+                Object.defineProperty(obj, Symbol.dispose, {{ value: dispose, configurable: true }});
+                Object.defineProperty(obj, Symbol.asyncDispose, {{ value: async () => dispose(), configurable: true }});
+                return obj;
             }},
             tmpdirSync: (label) => {{
                 const dir = "{tmp}" + "/bunrs-tmp-" + (label || "x") + "-" + Date.now() + "-" + Math.random().toString(36).slice(2);
@@ -71,7 +75,7 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 return dir;
             }},
             tempDirWithFiles: (label, files) => {{
-                const dir = "{tmp}" + "/bunrs-tmp-" + label + "-" + Date.now();
+                const dir = "{tmp}" + "/bunrs-tmp-" + label + "-" + Date.now() + "-" + Math.random().toString(36).slice(2);
                 require("node:fs").mkdirSync(dir, {{ recursive: true }});
                 for (const [name, content] of Object.entries(files)) {{
                     const p = require("node:path").join(dir, name);

@@ -140,6 +140,34 @@ const BUN_HELPERS: &str = r#"
     globalThis.withoutAggressiveGC = (fn) => fn();
   }
 
+  // Re-export onto Bun namespace so `import { JSON5 } from "bun"` works.
+  Bun.JSON5 = globalThis.JSON5;
+  Bun.JSONC = globalThis.JSON5;
+  Bun.YAML = Bun.YAML || globalThis.YAML;
+
+  // ── Bun.markdown / Bun.Markdown (stub) — extremely minimal HTML-ish ─
+  // Real test coverage of CommonMark needs a full markdown engine; we
+  // ship a passthrough that at least lets test files load.
+  Bun.markdown = function (src, _opts) {
+    const html = String(src)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    return { html, headings: [], render: () => html };
+  };
+  Bun.markdown.render = (src, opts) => Bun.markdown(src, opts).html;
+  Bun.Markdown = Bun.markdown;
+  Bun.Markdown.html = (src, opts) => Bun.markdown(src, opts).html;
+  Bun.Markdown.render = Bun.markdown.render;
+
+  // ── Bun.secrets (stub) ──────────────────────────────────────────────
+  Bun.secrets = {
+    get: async () => null,
+    set: async () => {},
+    delete: async () => {},
+    list: async () => [],
+  };
+
   // ── Bun.inspect: pretty-print like Node.js util.inspect ─────────────
   Bun.inspect = function inspect(v, opts) {
     const seen = new WeakSet();
@@ -476,12 +504,21 @@ const BUN_HELPERS: &str = r#"
     else { cmd = opts.cmd[0]; args = opts.cmd.slice(1); options = opts; }
     const cp = require("node:child_process");
     const r = cp.spawnSync(cmd, args, options);
+    function wrapStdio(buf) {
+      if (!buf) return null;
+      const u = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+      u.text = () => new TextDecoder("utf-8").decode(u);
+      u.json = () => JSON.parse(new TextDecoder("utf-8").decode(u));
+      return u;
+    }
     return {
-      stdout: r.stdout || new Uint8Array(0),
-      stderr: r.stderr || new Uint8Array(0),
+      stdout: wrapStdio(r.stdout) || new Uint8Array(0),
+      stderr: wrapStdio(r.stderr) || new Uint8Array(0),
       exitCode: r.status === null ? -1 : r.status,
       success: r.status === 0,
       signalCode: r.signal,
+      pid: 0,
+      resourceUsage: () => ({}),
     };
   };
 
@@ -646,14 +683,17 @@ const BUN_HELPERS: &str = r#"
     // server so tests that just check the shape pass. Real I/O throws.
     const port = opts.port || 0;
     const host = opts.hostname || "localhost";
-    return {
+    const sock = {
       port, hostname: host,
       url: `tcp://${host}:${port}`,
-      stop: (force) => {},
+      address: { family: "IPv4", address: host, port },
+      stop: (_force) => {},
       ref: () => {}, unref: () => {},
       reload: () => {},
       data: opts.data || null,
+      get pendingConnections() { return 0; },
     };
+    return attachDispose(sock, () => sock.stop(true), async () => sock.stop(true));
   };
   Bun.connect = Bun.listen;
   Bun.udpSocket = async (opts) => ({
