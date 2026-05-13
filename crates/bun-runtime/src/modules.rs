@@ -422,6 +422,11 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
     let import_filename = filename.clone();
     let resolve_sync = Callback::new(ctx, "resolveSync", move |args| {
         let spec = args.get(0).to_string();
+        // Hash-prefixed (`#foo`) is package self-import syntax; we don't
+        // implement it. Throw to match Bun.
+        if spec.starts_with('#') {
+            return Err(format!("Cannot resolve {spec:?}"));
+        }
         if spec.starts_with('/') || spec.starts_with("file://") {
             return Ok(Value::new_string(args.context(), &spec));
         }
@@ -434,12 +439,14 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
     });
     obj.set_property("resolveSync", &resolve_sync.value_in(ctx)).ok();
     std::mem::forget(resolve_sync);
-    // resolve(spec, from?) - async version: return a resolved Promise of the path.
+    // resolve(spec, from?) - sync function that returns the resolved path.
+    // Bun's import.meta.resolve is synchronous (unlike Node's), so we
+    // just delegate to resolveSync.
     let _ = ctx.eval(
         &format!(
             r#"
             ((m) => {{
-                m.resolve = async function(spec, _from) {{ return m.resolveSync(spec); }};
+                m.resolve = function(spec, _from) {{ return m.resolveSync(spec); }};
                 m.require = globalThis.require;
                 m.path = {:?};
             }})
