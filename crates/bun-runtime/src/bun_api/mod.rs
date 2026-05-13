@@ -317,14 +317,35 @@ const BUN_HELPERS: &str = r##"
       return `<h${level}${idAttr}>${body}</h${level}>`;
     });
   }
+  // Escape standalone `"` to `&quot;` in TEXT content (outside HTML tag
+  // attributes). pulldown-cmark leaves them literal; Bun's md escapes them.
+  function _escapeQuotesInText(html) {
+    // Walk through, alternating between "in tag" and "in text". Only
+    // escape inside text segments.
+    let out = "";
+    let i = 0;
+    while (i < html.length) {
+      const lt = html.indexOf("<", i);
+      if (lt < 0) {
+        out += html.slice(i).replace(/"/g, "&quot;");
+        break;
+      }
+      out += html.slice(i, lt).replace(/"/g, "&quot;");
+      const gt = html.indexOf(">", lt);
+      if (gt < 0) {
+        out += html.slice(lt);
+        break;
+      }
+      out += html.slice(lt, gt + 1);
+      i = gt + 1;
+    }
+    return out;
+  }
   function _renderMarkdownHtml(src, opts) {
     const decoded = _decodeMdInput(src);
     let html = Bun.__rust_markdown_html(decoded);
+    html = _escapeQuotesInText(html);
     if (opts && opts.headings) {
-      // Shorthand: `headings: true` enables both ids + autolink.
-      // `headings: { ids: true }` → ids only.
-      // `headings: { ids: true, autolink: true }` → ids + autolink.
-      // `headings: { autolink: true }` (without ids) → no-op (matches Bun).
       const ids = opts.headings === true || !!opts.headings.ids;
       const autolink = opts.headings === true || (opts.headings.autolink && ids);
       if (ids) {
