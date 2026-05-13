@@ -1286,7 +1286,15 @@ const BUN_HELPERS: &str = r#"
 
   // ── Bun.S3Client expanded ──────────────────────────────────────────
   Bun.S3Client = class S3Client {
-    constructor(opts) { this.opts = opts || {}; }
+    constructor(opts) {
+      opts = opts || {};
+      if (opts.queueSize !== undefined) {
+        if (typeof opts.queueSize !== "number" || opts.queueSize < 1) {
+          throw new RangeError("S3Client: queueSize must be >= 1");
+        }
+      }
+      this.opts = opts;
+    }
     file(_p) {
       // Return a Bun.file-shaped object whose I/O throws lazily.
       return {
