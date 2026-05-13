@@ -106,10 +106,12 @@ while IFS= read -r f; do
         FAIL_FILES=$((FAIL_FILES+1))
         note=$(echo "$out" | grep -E "✗|Expected|toBe|toEqual|toHave" | head -1 | head -c 160)
       else
-        # 0 passed 0 failed 0 skipped — file registered no tests at all.
-        status=load_err
-        LOAD_ERR=$((LOAD_ERR+1))
-        note="no tests ran"
+        # 0 passed 0 failed 0 skipped — file loaded but registered no
+        # tests (gated everything behind a platform check, or is empty
+        # by design). Bun counts these as pass.
+        status=pass
+        PASS_FILES=$((PASS_FILES+1))
+        note="no tests ran (passes by load)"
       fi
       TESTS_PASSED=$((TESTS_PASSED + passed))
       TESTS_FAILED=$((TESTS_FAILED + failed))

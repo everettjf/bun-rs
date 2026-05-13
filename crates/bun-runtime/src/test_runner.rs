@@ -395,7 +395,14 @@ const GLOBALS: &str = r#"
     });
   }
 
-  g.test = (name, fn) => pushTest(name, fn);
+  g.test = (name, fn, opts) => {
+    if (opts && typeof opts === "object") {
+      if (opts.retry !== undefined && opts.repeats !== undefined) {
+        throw new Error("Cannot set both retry and repeats on a test");
+      }
+    }
+    return pushTest(name, fn);
+  };
   g.it = g.test;
   g.test.skip = (name) => pushTest(name, () => {}, { skip: true });
   g.it.skip = g.test.skip;
