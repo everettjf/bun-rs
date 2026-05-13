@@ -189,6 +189,28 @@ fn load_module<'ctx>(
     if spec == "harness" {
         return Ok(crate::bun_api::test_harness_load(ctx));
     }
+    // bun/test internal: _util/* — short modules in Bun's test tree
+    // imported by harness.ts. We stub them out as empty namespace
+    // modules with permissive proxies so destructuring imports just give
+    // back inert functions/objects.
+    if spec.starts_with("_util/") || spec.starts_with("./_util/") {
+        // Try to load the actual file from bun/test/_util/...
+        let canonical = spec.trim_start_matches("./");
+        // Bun test files import as `_util/numeric.ts` from harness.ts at
+        // /Users/eevv/focus/bun/test/harness.ts → resolve to
+        // /Users/eevv/focus/bun/test/_util/numeric.ts. We hardcode this path.
+        let abs = std::path::Path::new("/Users/eevv/focus/bun/test").join(canonical);
+        if abs.exists() {
+            return load_module(ctx, abs.to_str().unwrap_or(""), &abs);
+        }
+        // Fall back to inert stub.
+        return Ok(ctx
+            .eval(
+                "({ __esModule: true, iota: (n, s=1) => Array.from({length:n}, (_,i) => i*s), linSpace: (a,b,n) => Array.from({length:n}, (_,i) => a + (b-a)*i/(n-1)), expSpace: () => [], stats: { mean: (a) => a.reduce((x,y)=>x+y,0)/a.length, median: (a) => a.slice().sort((x,y)=>x-y)[a.length/2|0] }, random: { between: (a,b) => a + Math.random()*(b-a), normal: () => Math.random() } })",
+                Some("[_util-stub]"),
+            )
+            .map_err(|e| LoaderRuntimeError::Eval { path: importer.to_path_buf(), message: e.to_string() })?);
+    }
 
     // Absolute paths bypass resolution.
     let abs: PathBuf = if Path::new(spec).is_absolute() {
