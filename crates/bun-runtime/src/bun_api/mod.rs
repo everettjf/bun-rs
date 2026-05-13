@@ -234,7 +234,9 @@ const BUN_HELPERS: &str = r#"
     const _store = new Map();
     function validateArgs(opts, methodName) {
       if (!opts || typeof opts !== "object" || Array.isArray(opts)) {
-        const err = new TypeError("Expected options to be an object");
+        const err = new TypeError(
+          "secrets." + methodName + " requires an options object (Expected options to be an object)"
+        );
         err.code = "ERR_INVALID_ARG_TYPE";
         throw err;
       }
@@ -988,6 +990,15 @@ const BUN_HELPERS: &str = r#"
       reload: () => {},
       data: opts.data || null,
       get pendingConnections() { return 0; },
+      getsockname(out) {
+        if (arguments.length === 0 || typeof out !== "object" || out === null) {
+          throw new TypeError("getsockname requires an object argument");
+        }
+        out.address = host;
+        out.family = "IPv4";
+        out.port = port;
+        return out;
+      },
     };
     return attachDispose(sock, () => sock.stop(true), async () => sock.stop(true));
   };
