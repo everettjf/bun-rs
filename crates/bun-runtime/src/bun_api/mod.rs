@@ -163,7 +163,7 @@ pub fn install_bun(ctx: &Context) {
         .expect("install Bun helpers");
 }
 
-const BUN_HELPERS: &str = r#"
+const BUN_HELPERS: &str = r##"
 (function () {
   const Bun = globalThis.Bun;
 
@@ -273,19 +273,28 @@ const BUN_HELPERS: &str = r#"
       .replace(/-+/g, "-")       // collapse hyphens
       .replace(/^-|-$/g, "");    // trim hyphens
   }
-  function _injectHeadingIds(html) {
+  function _injectHeadingIds(html, autolink) {
+    const seen = new Map();
     return html.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, inner) => {
       const text = inner.replace(/<[^>]*>/g, "");
-      const id = _slug(text);
-      if (!id) return `<h${level}>${inner}</h${level}>`;
-      return `<h${level} id="${id}">${inner}</h${level}>`;
+      let id = _slug(text);
+      // De-dupe with -N suffix.
+      const count = seen.get(id) || 0;
+      const finalId = count === 0 ? id : (id + "-" + count);
+      seen.set(id, count + 1);
+      // Always include id (even empty) when headings.ids is on.
+      const idAttr = ` id="${finalId}"`;
+      const body = autolink && finalId
+        ? `<a href="#${finalId}">${inner}</a>`
+        : inner;
+      return `<h${level}${idAttr}>${body}</h${level}>`;
     });
   }
   function _renderMarkdownHtml(src, opts) {
     const decoded = _decodeMdInput(src);
     let html = Bun.__rust_markdown_html(decoded);
-    if (opts && opts.headings && opts.headings.ids) {
-      html = _injectHeadingIds(html);
+    if (opts && opts.headings && (opts.headings.ids || opts.headings.autolink)) {
+      html = _injectHeadingIds(html, !!opts.headings.autolink);
     }
     return html;
   }
@@ -529,7 +538,7 @@ const BUN_HELPERS: &str = r#"
   // ── Bun.escapeHTML / .stringWidth / .indexOfLine / .concatArrayBuffers ─
   Bun.escapeHTML = function (s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#x27;"
     }[c]));
   };
   // stringWidth: very rough — ASCII = 1, wide CJK ≈ 2, control = 0.
@@ -1215,7 +1224,14 @@ const BUN_HELPERS: &str = r#"
       }
       // Strip trailing null bytes (typed-array tests pad to alignment).
       while (raw.length > 0 && raw.charCodeAt(raw.length - 1) === 0) raw = raw.slice(0, -1);
-      const json = Bun.__rust_yaml_to_json(raw);
+      let json;
+      try {
+        json = Bun.__rust_yaml_to_json(raw);
+      } catch (e) {
+        // Wrap as SyntaxError so tests using `.toThrow(SyntaxError)` pass.
+        const se = new SyntaxError(e && e.message ? e.message : String(e));
+        throw se;
+      }
       return JSON.parse(json);
     },
     stringify(v, _opts) {
@@ -1505,7 +1521,7 @@ const BUN_HELPERS: &str = r#"
   };
 
 })();
-"#;
+"##;
 
 // Convert a serde_yaml::Value into a serde_json::Value. YAML allows
 // non-string mapping keys (numbers, sequences, etc.); JSON does not, so
@@ -1604,7 +1620,7 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             CookieMap: undefined,
             Cookie: undefined,
             // Bun's internal probes — all return false / no-op.
-            hasNonReifiedStatic: (_v) => false,
+            hasNonReifiedStatic: (_v) => true,
             isReifiedStatic: (_v) => false,
             heapSize: () => 0,
             generateHeapSnapshot: () => "{}",
