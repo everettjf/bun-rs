@@ -671,6 +671,27 @@ const BUN_HELPERS: &str = r#"
         throw new TypeError("Bun.spawn: signal option must be an AbortSignal");
       }
     }
+    // Null byte injection guard — Bun rejects any cmd / args / env / cwd
+    // containing a null byte. Matches Node's ERR_INVALID_ARG_VALUE.
+    function checkNullByte(s, label) {
+      if (typeof s !== "string") return;
+      if (s.indexOf("\0") >= 0) {
+        const err = new TypeError(label + " must be a string without null bytes");
+        err.code = "ERR_INVALID_ARG_VALUE";
+        throw err;
+      }
+    }
+    checkNullByte(cmd, "cmd[0]");
+    if (args) {
+      for (let i = 0; i < args.length; i++) checkNullByte(args[i], "args[" + i + "]");
+    }
+    checkNullByte(options.cwd, "cwd");
+    if (options.env && typeof options.env === "object") {
+      for (const [k, v] of Object.entries(options.env)) {
+        checkNullByte(k, "env key '" + k + "'");
+        checkNullByte(v, "env value");
+      }
+    }
     const cp = require("node:child_process");
     const proc = cp.spawn(cmd, args, {
       cwd: options.cwd,
