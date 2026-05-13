@@ -259,9 +259,11 @@ const BUN_HELPERS: &str = r#"
   };
   Bun.inspect.custom = Symbol.for("nodejs.util.inspect.custom");
   Bun.inspect.table = function (rows, _opts) {
-    // Bun returns "" for non-object / non-array inputs.
+    // Bun returns "" for null / undefined / primitive inputs (string,
+    // number, boolean, bigint, symbol). Functions and objects render.
     if (rows === null || rows === undefined) return "";
-    if (typeof rows !== "object") return "";
+    const t = typeof rows;
+    if (t === "string" || t === "number" || t === "boolean" || t === "bigint" || t === "symbol") return "";
     // Minimal table: an array of objects rendered as a 2D ASCII-like table.
     if (Array.isArray(rows)) {
       if (rows.length === 0) return "";
