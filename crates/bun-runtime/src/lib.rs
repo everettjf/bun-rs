@@ -128,6 +128,39 @@ fn run() -> Result<(), RuntimeError> {
         args.remove(0)
     };
 
+    // Strip Bun-specific runtime flags we don't implement (so test spawns
+    // that pass --smol / --no-warnings / --cwd / --silent don't trip the
+    // usage-error path). We just consume the flag (and its value if it
+    // takes one) and continue.
+    let one_arg_flags = [
+        "--cwd", "--watch", "--inspect", "--inspect-brk", "--inspect-wait",
+        "--config", "--bun", "--filter", "--port", "--tsconfig",
+        "--require", "--preload", "--define", "--external", "--target",
+        "--loader", "--minify-syntax", "--minify-whitespace", "--minify",
+    ];
+    let zero_arg_flags = [
+        "--smol", "--no-warnings", "--silent", "--no-deprecation",
+        "--throw-deprecation", "--no-lazy", "--enable-source-maps",
+        "--disable-proto", "--disable-warning", "--trace-warnings",
+        "--no-print", "--prefer-offline", "--prefer-latest",
+        "--use", "--print", "--compact",
+    ];
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if zero_arg_flags.contains(&a) {
+            args.remove(i);
+        } else if one_arg_flags.contains(&a) {
+            args.remove(i);
+            if i < args.len() { args.remove(i); }
+        } else if a.starts_with("--") && a.contains('=') {
+            // --flag=value: drop wholesale.
+            args.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+
     if args.is_empty() {
         // No args → REPL. If stdin isn't a TTY (piped), fall back to "read all
         // stdin and eval it like -e".

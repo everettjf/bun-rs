@@ -297,7 +297,24 @@
   // ─────────────────────────── fetch ───────────────────────────
   // __bun_fetch is async (returns a Promise) on the Rust side, so wrap.
   g.fetch = async function (url, init) {
-    const u = typeof url === "string" ? url : url.url;
+    // Accept (string | URL | Request). Request carries its own headers /
+    // method / body so we merge those into init.
+    let u;
+    if (typeof url === "string") {
+      u = url;
+    } else if (url && typeof url.href === "string") {
+      u = url.href;             // URL object
+    } else if (url && typeof url.url === "string") {
+      u = url.url;              // Request
+      if (!init) init = {
+        method: url.method,
+        headers: url.headers,
+        body: url._bodyText !== undefined ? url._bodyText : url._bodyBytes,
+        signal: url.signal,
+      };
+    } else {
+      u = String(url);
+    }
     const i = init || {};
     const raw = await __bun_fetch(u, {
       method: (i.method || "GET").toUpperCase(),
