@@ -359,6 +359,7 @@ const GLOBALS: &str = r#"
       g.describe(name + " [" + safeStringify(args) + "]", () => body(...args));
     }
   };
+  g.describe.concurrent = g.describe;
 
   function safeStringify(v) {
     try { return JSON.stringify(v); } catch { return String(v); }

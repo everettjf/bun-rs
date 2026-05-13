@@ -67,6 +67,34 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Some("[fs.promises.open]"),
     ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[promises_v, exports_v])));
     exports.set_property("promises", &promises_v).unwrap();
+    // fs.constants — file flags + permission bits.
+    let constants_v = ctx
+        .eval(
+            r#"({
+                O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+                O_CREAT: 0o100, O_EXCL: 0o200, O_NOCTTY: 0o400, O_TRUNC: 0o1000,
+                O_APPEND: 0o2000, O_NONBLOCK: 0o4000, O_SYNC: 0o4010000,
+                O_DIRECTORY: 0o20000, O_NOFOLLOW: 0o100000, O_CLOEXEC: 0o2000000,
+                S_IFMT: 0o170000, S_IFREG: 0o100000, S_IFDIR: 0o040000,
+                S_IFLNK: 0o120000, S_IFBLK: 0o060000, S_IFCHR: 0o020000,
+                S_IFIFO: 0o010000, S_IFSOCK: 0o140000,
+                S_IRWXU: 0o700, S_IRWXG: 0o070, S_IRWXO: 0o007,
+                S_IRUSR: 0o400, S_IWUSR: 0o200, S_IXUSR: 0o100,
+                S_IRGRP: 0o040, S_IWGRP: 0o020, S_IXGRP: 0o010,
+                S_IROTH: 0o004, S_IWOTH: 0o002, S_IXOTH: 0o001,
+                S_ISUID: 0o4000, S_ISGID: 0o2000, S_ISVTX: 0o1000,
+                F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+                UV_FS_COPYFILE_EXCL: 1,
+                UV_FS_COPYFILE_FICLONE: 2,
+                UV_FS_COPYFILE_FICLONE_FORCE: 4,
+                COPYFILE_EXCL: 1,
+                COPYFILE_FICLONE: 2,
+                COPYFILE_FICLONE_FORCE: 4,
+            })"#,
+            Some("[fs.constants]"),
+        )
+        .unwrap();
+    exports.set_property("constants", &constants_v).unwrap();
     // Also expose the fd-IO + symlink/link/chown/... async wrappers on
     // fs.promises (they were added to `exports` via auto-wrap but not the
     // promises namespace).

@@ -295,7 +295,15 @@ fn build_constants_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             S_IFLNK: 0o120000, S_IFBLK: 0o060000, S_IFCHR: 0o020000,
             S_IFIFO: 0o010000, S_IFSOCK: 0o140000,
             S_IRWXU: 0o700, S_IRWXG: 0o070, S_IRWXO: 0o007,
+            S_IRUSR: 0o400, S_IWUSR: 0o200, S_IXUSR: 0o100,
+            S_IRGRP: 0o040, S_IWGRP: 0o020, S_IXGRP: 0o010,
+            S_IROTH: 0o004, S_IWOTH: 0o002, S_IXOTH: 0o001,
+            S_ISUID: 0o4000, S_ISGID: 0o2000, S_ISVTX: 0o1000,
             F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+            // Signal constants (subset).
+            SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGABRT: 6,
+            SIGFPE: 8, SIGKILL: 9, SIGSEGV: 11, SIGPIPE: 13, SIGALRM: 14,
+            SIGTERM: 15, SIGUSR1: 30, SIGUSR2: 31, SIGCHLD: 20,
         })"#,
         Some("[node:constants]"),
     )
