@@ -1661,6 +1661,48 @@ const BUN_HELPERS: &str = r##"
     order: (a, b) => String(a).localeCompare(String(b)),
   });
 
+  // Bun.write: validate args, return Promise. Wraps the Rust binding.
+  (function () {
+    const _rustWrite = Bun.write;
+    Bun.write = function (destination, data, _opts) {
+      const errType = (msg) => {
+        const e = new TypeError(msg);
+        e.code = "ERR_INVALID_ARG_TYPE";
+        return e;
+      };
+      if (arguments.length === 0) {
+        return Promise.reject(errType("Bun.write: destination required"));
+      }
+      const isPath = typeof destination === "string"
+        || destination instanceof URL
+        || (destination && typeof destination === "object" && (destination.path || destination instanceof Blob || destination.name));
+      if (!isPath) {
+        return Promise.reject(errType("Bun.write: destination must be a path or Blob"));
+      }
+      if (arguments.length < 2 || data == null) {
+        return Promise.reject(errType("Bun.write: data is required"));
+      }
+      try {
+        let path;
+        if (typeof destination === "string") path = destination;
+        else if (destination instanceof URL) path = decodeURIComponent(destination.pathname);
+        else if (destination && destination.path) path = destination.path;
+        else if (destination && destination.name) path = destination.name;
+        else return Promise.reject(errType("Bun.write: destination must be a path or Blob"));
+        let body;
+        if (data instanceof Blob) body = data._bytes || new TextEncoder().encode("");
+        else if (data instanceof Response) return data.bytes().then(b => _rustWrite(path, b));
+        else if (data instanceof Uint8Array || data instanceof ArrayBuffer || ArrayBuffer.isView(data)) body = data;
+        else if (typeof data === "string") body = data;
+        else body = String(data);
+        const n = _rustWrite(path, body);
+        return Promise.resolve(n);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    };
+  })();
+
   // ── Bun.glob / Glob (best-effort) ───────────────────────────────────
   Bun.Glob = class Glob {
     constructor(pattern) { this.pattern = pattern; }

@@ -478,6 +478,19 @@ const GLOBALS: &str = r#"
       toMatch(re) { check(typeof re === "string" ? received.includes(re) : re.test(received), re, "toMatch"); },
       // Alias: jest's toThrowError === toThrow.
       toThrowError(matcher) { return obj.toThrow(matcher); },
+      // Bun-extension: assert thrown error matches a constructor + has .code property.
+      toThrowWithCode(cls, code) {
+        let caught;
+        try { received(); } catch (e) { caught = e; }
+        const ok = !!caught && (cls ? caught instanceof cls : true) && caught.code === code;
+        check(ok, code, "toThrowWithCode");
+      },
+      async toThrowWithCodeAsync(cls, code) {
+        let caught;
+        try { await received(); } catch (e) { caught = e; }
+        const ok = !!caught && (cls ? caught instanceof cls : true) && caught.code === code;
+        check(ok, code, "toThrowWithCodeAsync");
+      },
       toThrow(matcher) {
         let caught;
         try { received(); } catch (e) { caught = e; }
