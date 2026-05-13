@@ -925,9 +925,12 @@ const GLOBALS: &str = r#"
         unreachable: () => { throw new Error("expect().unreachable()"); },
       };
     }
-    const e = mkExpect(received, false);
-    Object.defineProperty(e, "not", { get() { return mkExpect(received, true); } });
-    return e;
+    function makeChain(notFlag) {
+      const e = mkExpect(received, notFlag);
+      Object.defineProperty(e, "not", { get() { return makeChain(!notFlag); } });
+      return e;
+    }
+    return makeChain(false);
   };
 
   // ── Asymmetric matchers (expect.any / .anything / .objectContaining / etc.) ──

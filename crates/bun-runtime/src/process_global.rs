@@ -323,6 +323,14 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
         .expect("set versions.bun");
     proc.set_property("versions", &versions).expect("set versions");
 
+    // process.revision — Bun exposes the git revision of the binary.
+    // We use a stable stub so tests can compare process.revision === Bun.revision.
+    proc.set_property(
+        "revision",
+        &Value::new_string(ctx, "bun-rs-dev"),
+    )
+    .expect("set revision");
+
     // Stash argv for future read-back (e.g. process.argv0).
     set_argv(argv);
 

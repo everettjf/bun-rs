@@ -55,7 +55,71 @@ fn install_extras(ctx: &Context) {
             c.assert = function (cond, ...args) {
                 if (!cond) console.error("Assertion failed:", ...args);
             };
-            c.table = function (data) { console.log(data); };
+            c.table = function (data, columns) {
+                if (columns !== undefined && !Array.isArray(columns)) {
+                    throw new TypeError("console.table: columns must be an array");
+                }
+                // Compute headers + rows. Bun/Node accept an array-of-
+                // objects, array-of-primitives, or a single object.
+                let headers = [];
+                let rows = [];
+                let indexLabel = "";
+                if (Array.isArray(data)) {
+                    indexLabel = "";
+                    // Determine header set: union of keys for objects.
+                    const headerSet = new Set();
+                    for (const item of data) {
+                        if (item && typeof item === "object" && !Array.isArray(item)) {
+                            for (const k of Object.keys(item)) headerSet.add(k);
+                        }
+                    }
+                    headers = columns ? columns.slice() : [...headerSet];
+                    if (headers.length === 0) headers = ["Values"];
+                    for (let i = 0; i < data.length; i++) {
+                        const item = data[i];
+                        const row = [String(i)];
+                        for (const h of headers) {
+                            if (item && typeof item === "object" && h in item) {
+                                row.push(String(item[h]));
+                            } else if (h === "Values") {
+                                row.push(String(item));
+                            } else {
+                                row.push("");
+                            }
+                        }
+                        rows.push(row);
+                    }
+                } else if (data && typeof data === "object") {
+                    headers = columns ? columns.slice() : ["Values"];
+                    for (const [k, v] of Object.entries(data)) {
+                        rows.push([k, String(v)]);
+                    }
+                } else {
+                    console.log(data);
+                    return;
+                }
+                // Render box-drawing table.
+                const cols = [indexLabel, ...headers];
+                const colWidths = cols.map((c, i) => {
+                    let w = String(c).length;
+                    for (const r of rows) w = Math.max(w, String(r[i] ?? "").length);
+                    return w;
+                });
+                function line(left, mid, right, fill) {
+                    return left + colWidths.map(w => fill.repeat(w + 2)).join(mid) + right;
+                }
+                function fmt(row) {
+                    return "│" + row.map((c, i) => " " + String(c ?? "").padEnd(colWidths[i]) + " ").join("│") + "│";
+                }
+                const out = [
+                    line("┌", "┬", "┐", "─"),
+                    fmt(cols),
+                    line("├", "┼", "┤", "─"),
+                    ...rows.map(fmt),
+                    line("└", "┴", "┘", "─"),
+                ].join("\n");
+                console.log(out);
+            };
             c.profile = function () {};
             c.profileEnd = function () {};
             c.timeStamp = function () {};
