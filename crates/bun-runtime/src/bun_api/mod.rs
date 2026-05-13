@@ -1544,7 +1544,21 @@ const BUN_HELPERS: &str = r##"
       async json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
       async bytes() { return this.stdout; },
       async arrayBuffer() { return this.stdout.buffer.slice(0); },
-      async lines() { return new TextDecoder().decode(this.stdout).split("\n"); },
+      lines() {
+        const text = new TextDecoder().decode(this.stdout);
+        const parts = text.split("\n");
+        return {
+          [Symbol.asyncIterator]() {
+            let i = 0;
+            return { next() { return Promise.resolve(i < parts.length ? { value: parts[i++], done: false } : { value: undefined, done: true }); } };
+          },
+          [Symbol.iterator]() {
+            let i = 0;
+            return { next() { return i < parts.length ? { value: parts[i++], done: false } : { value: undefined, done: true }; } };
+          },
+        };
+      },
+      async blob() { return new Blob([this.stdout]); },
       // IMPORTANT: must pass onFulfilled a NON-thenable view, otherwise
       // `await obj` -> obj.then(resolve) -> resolve(obj) -> the runtime
       // sees resolve called with a thenable and calls obj.then again ->
@@ -1647,7 +1661,21 @@ const BUN_HELPERS: &str = r##"
       async json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
       async bytes() { return this.stdout; },
       async arrayBuffer() { return this.stdout.buffer.slice(0); },
-      async lines() { return new TextDecoder().decode(this.stdout).split("\n"); },
+      lines() {
+        const text = new TextDecoder().decode(this.stdout);
+        const parts = text.split("\n");
+        return {
+          [Symbol.asyncIterator]() {
+            let i = 0;
+            return { next() { return Promise.resolve(i < parts.length ? { value: parts[i++], done: false } : { value: undefined, done: true }); } };
+          },
+          [Symbol.iterator]() {
+            let i = 0;
+            return { next() { return i < parts.length ? { value: parts[i++], done: false } : { value: undefined, done: true }; } };
+          },
+        };
+      },
+      async blob() { return new Blob([this.stdout]); },
       then(onFulfilled, onRejected) {
         const plain = {
           exitCode: this.exitCode, stdout: this.stdout, stderr: this.stderr,
