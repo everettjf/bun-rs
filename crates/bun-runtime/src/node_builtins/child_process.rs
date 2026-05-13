@@ -88,11 +88,82 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        let out = match cmd
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-        {
+        // Optional `input` / `stdin` (Buffer | Uint8Array | string).
+        let stdin_bytes: Option<Vec<u8>> = if opts.is_object() {
+            opts.to_object().ok().and_then(|o| {
+                o.get_property("input")
+                    .ok()
+                    .or_else(|| o.get_property("stdin").ok())
+                    .and_then(|v| {
+                        if let Some(b) = v.typed_array_bytes() {
+                            Some(b.to_vec())
+                        } else if v.is_string() {
+                            Some(v.to_string().into_bytes())
+                        } else {
+                            None
+                        }
+                    })
+            })
+        } else {
+            None
+        };
+        if stdin_bytes.is_some() {
+            cmd.stdin(Stdio::piped());
+        }
+        // Allow caller to pass env override.
+        if opts.is_object() {
+            if let Ok(env_v) = opts.to_object().and_then(|o| o.get_property("env")) {
+                if env_v.is_object() {
+                    if let Ok(env_o) = env_v.to_object() {
+                        cmd.env_clear();
+                        let names_v = args
+                            .context()
+                            .eval(
+                                "(o) => Object.keys(o)",
+                                Some("[env-keys]"),
+                            )
+                            .ok()
+                            .and_then(|f| f.to_object().ok())
+                            .and_then(|f| f.call(None, &[env_v]).ok());
+                        if let Some(names) = names_v {
+                            if let Ok(names_o) = names.to_object() {
+                                if let Ok(n_v) = names_o.get_property("length") {
+                                    let n = n_v.to_number() as u32;
+                                    for i in 0..n {
+                                        if let Ok(k) = names_o.get_property_at(i) {
+                                            let key = k.to_string();
+                                            if let Ok(val) = env_o.get_property(&key) {
+                                                cmd.env(&key, val.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let out = match {
+            if let Some(bytes) = stdin_bytes {
+                use std::io::Write;
+                let child_res = cmd
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+                match child_res {
+                    Ok(mut child) => {
+                        if let Some(mut sin) = child.stdin.take() {
+                            let _ = sin.write_all(&bytes);
+                        }
+                        child.wait_with_output()
+                    }
+                    Err(e) => Err(e),
+                }
+            } else {
+                cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output()
+            }
+        } {
             Ok(o) => o,
             Err(e) => {
                 // Mirror Node: still return an object with `.error` rather
