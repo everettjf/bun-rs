@@ -172,6 +172,25 @@
         // Slice into a fresh ArrayBuffer so callers can mutate freely.
         return Promise.resolve(u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength));
       },
+      blob() {
+        if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
+        this._bodyUsed = true;
+        const u8 = this._bodyBytes || new __bun_te().encode(this._body);
+        // Bun's Response/Request.blob returns a Blob. We have Blob polyfill.
+        const ct = this.headers && this.headers.get ? (this.headers.get("content-type") || "") : "";
+        return Promise.resolve(new Blob([u8], { type: ct }));
+      },
+      formData() {
+        if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
+        this._bodyUsed = true;
+        // Best-effort form-data parse only handles application/x-www-form-urlencoded.
+        const ct = this.headers && this.headers.get ? (this.headers.get("content-type") || "") : "";
+        const fd = new FormData();
+        if (ct.includes("application/x-www-form-urlencoded")) {
+          for (const [k, v] of new URLSearchParams(this._body)) fd.append(k, v);
+        }
+        return Promise.resolve(fd);
+      },
     };
   }
 
@@ -240,6 +259,14 @@
       const bytes = init.body instanceof Uint8Array ? init.body : null;
       Object.assign(this, makeBody(init.body, bytes));
     }
+    clone() {
+      const bytes = this._bodyBytes ? new Uint8Array(this._bodyBytes) : null;
+      return new Request(this.url, {
+        method: this.method,
+        headers: this.headers,
+        body: bytes ?? this._body ?? null,
+      });
+    }
   }
   g.Request = Request;
 
@@ -294,6 +321,18 @@
     static redirect(url, status) {
       const r = new Response("", { status: status || 302 });
       try { r.headers.set("location", String(url)); } catch {}
+      return r;
+    }
+    clone() {
+      // Naive clone: rebuild from body bytes + headers/status. Streams are
+      // single-use; cloning a sourced stream isn't supported here.
+      const bytes = this._bodyBytes ? new Uint8Array(this._bodyBytes) : null;
+      const r = new Response(bytes ?? this._body ?? "", {
+        status: this.status,
+        statusText: this.statusText,
+        headers: this.headers,
+      });
+      r.url = this.url;
       return r;
     }
   }
