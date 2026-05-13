@@ -1203,7 +1203,60 @@ const BUN_HELPERS: &str = r##"
   globalThis.ArrayBufferSink = ArrayBufferSink;
 
   // ── Stubs for less common APIs (keep test files from load_err) ─────
-  Bun.wrapAnsi = (s, _w) => String(s);
+  // Bun.wrapAnsi(s, width, opts?) — word-wrap text at `width` cols,
+  // preserving ANSI escape sequences (we just count printable chars).
+  Bun.wrapAnsi = function (s, width, opts) {
+    if (s == null) return "";
+    s = String(s);
+    if (typeof width !== "number" || width <= 0) return s;
+    const trim = !opts || opts.trim !== false;
+    const hard = !!(opts && opts.hard);
+    const wordWrap = !opts || opts.wordWrap !== false;
+    function visibleLength(t) { return t.replace(/\x1b\[[0-9;]*m/g, "").length; }
+    function chunkBreak(word, w) {
+      // Break a word that exceeds w into pieces of length w.
+      const out = [];
+      let i = 0;
+      while (i < word.length) { out.push(word.slice(i, i + w)); i += w; }
+      return out;
+    }
+    const paragraphs = s.split("\n");
+    const wrapped = [];
+    for (const para of paragraphs) {
+      const words = wordWrap ? para.split(/(\s+)/) : [para];
+      let line = "";
+      let cur = 0;
+      for (const tok of words) {
+        if (tok === "") continue;
+        const tokLen = visibleLength(tok);
+        if (/^\s+$/.test(tok)) {
+          // Whitespace — preserve as part of line unless wrap.
+          if (cur === 0 && trim) continue;
+          line += tok;
+          cur += tokLen;
+          continue;
+        }
+        if (cur + tokLen <= width) {
+          line += tok;
+          cur += tokLen;
+        } else {
+          if (line) { wrapped.push(line.trimEnd()); line = ""; cur = 0; }
+          if (tokLen > width && hard) {
+            const pieces = chunkBreak(tok, width);
+            for (let i = 0; i < pieces.length - 1; i++) wrapped.push(pieces[i]);
+            line = pieces[pieces.length - 1];
+            cur = visibleLength(line);
+          } else {
+            line = trim ? tok : tok;
+            cur = tokLen;
+          }
+        }
+      }
+      if (line) wrapped.push(trim ? line.trimEnd() : line);
+      if (line === "" && para === "") wrapped.push("");
+    }
+    return wrapped.join("\n");
+  };
   Bun.sliceAnsi = (s, a, b) => String(s).slice(a, b);
   Bun.stripANSI = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
   Bun.password = {
