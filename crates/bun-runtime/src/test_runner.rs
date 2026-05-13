@@ -1057,7 +1057,8 @@ const GLOBALS: &str = r#"
     }
     for (const [name, fn] of Object.entries(matchers)) {
       if (typeof fn !== "function") {
-        throw new Error("expect.extend: `" + name + "` is not a valid matcher. Must be a function, is " + JSON.stringify(typeof fn));
+        const typeStr = fn === null ? "null" : (Array.isArray(fn) ? "array" : typeof fn);
+        throw new Error("expect.extend: `" + name + "` is not a valid matcher. Must be a function, is " + JSON.stringify(typeStr));
       }
       g.__bun_custom_matchers[name] = fn;
       // (a) asymmetric form: expect.foo(args) → matcher object.
