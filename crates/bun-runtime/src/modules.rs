@@ -301,7 +301,14 @@ fn load_module<'ctx>(
     // the calling module's filename (not the global cwd). Bun does this
     // implicitly; our globalThis.require uses cwd which is wrong for
     // nested requires.
-    let local_require = "const require = (spec) => globalThis.__bun_require_sync(spec, __filename);\n";
+    let local_require = "const require = (function(){\
+        const r = (spec) => globalThis.__bun_require_sync(spec, __filename);\
+        r.resolve = (spec) => spec;\
+        r.cache = (globalThis.require && globalThis.require.cache) || {};\
+        r.main = (globalThis.require && globalThis.require.main) || null;\
+        r.extensions = (globalThis.require && globalThis.require.extensions) || {};\
+        return r;\
+    })();\n";
     let wrapped = if is_sync {
         format!(
             "(function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
