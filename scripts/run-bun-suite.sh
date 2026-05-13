@@ -68,17 +68,24 @@ while IFS= read -r f; do
     if [ -n "$summary" ]; then
       passed=$(echo "$summary" | sed -nE 's/.*tests:[[:space:]]+([0-9]+) passed.*/\1/p')
       failed=$(echo "$summary" | sed -nE 's/.*passed,[[:space:]]+([0-9]+) failed.*/\1/p')
+      skipped=$(echo "$summary" | sed -nE 's/.*failed,[[:space:]]+([0-9]+) skipped.*/\1/p')
       passed=${passed:-0}
       failed=${failed:-0}
+      skipped=${skipped:-0}
       if [ "$failed" = "0" ] && [ "$passed" != "0" ]; then
         status=pass
         PASS_FILES=$((PASS_FILES+1))
+      elif [ "$failed" = "0" ] && [ "$skipped" != "0" ]; then
+        # Whole file was skipped (skipIf condition) — count as pass.
+        status=pass
+        PASS_FILES=$((PASS_FILES+1))
+        note="all $skipped tests skipped"
       elif [ "$failed" != "0" ]; then
         status=fail
         FAIL_FILES=$((FAIL_FILES+1))
         note=$(echo "$out" | grep -E "✗|Expected|toBe|toEqual|toHave" | head -1 | head -c 160)
       else
-        # 0 passed 0 failed — no tests executed
+        # 0 passed 0 failed 0 skipped — file registered no tests at all.
         status=load_err
         LOAD_ERR=$((LOAD_ERR+1))
         note="no tests ran"
