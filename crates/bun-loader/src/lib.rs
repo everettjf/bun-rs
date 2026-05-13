@@ -27,6 +27,8 @@ pub enum LoaderError {
     Transpile(#[from] bun_transpile::TranspileError),
     #[error(transparent)]
     Rewrite(#[from] RewriteError),
+    #[error("parse error in {0}: {1}")]
+    ParseModule(PathBuf, String),
 }
 
 /// A module ready to be wrapped + evaluated by the runtime.
@@ -60,6 +62,127 @@ pub struct PreparedModule {
 pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| LoaderError::Io(path.to_path_buf(), e))?;
+
+    // Non-JS file types: wrap as a CJS module that exports a parsed
+    // value. ESM `import x from "./file.json"` and `import x from
+    // "./file.txt"` go through this path.
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "json" => {
+            // Strict JSON — fast path: embed source as JS string literal
+            // and run JSON.parse at module-init time.
+            let escaped = source
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: source,
+            });
+        }
+        "jsonc" | "json5" => {
+            // JSONC has // comments; JSON5 has comments + trailing commas
+            // + unquoted keys + single quotes. Parse with the json5 crate
+            // (which is JSON5-strict superset of JSONC) then emit as JSON
+            // literal so the runtime side is identical to .json.
+            let value: serde_json::Value = json5::from_str(&source)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let canonical = serde_json::to_string(&value)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let escaped = canonical
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: source,
+            });
+        }
+        "toml" => {
+            let value: toml::Value = toml::from_str(&source)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let as_json = serde_json::to_value(&value)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let canonical = serde_json::to_string(&as_json)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let escaped = canonical
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: source,
+            });
+        }
+        "yaml" | "yml" => {
+            let value: serde_yaml::Value = serde_yaml::from_str(&source)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let as_json = serde_json::to_value(&value)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let canonical = serde_json::to_string(&as_json)
+                .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
+            let escaped = canonical
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: source,
+            });
+        }
+        "txt" | "html" | "css" => {
+            // Default import is the raw text body.
+            let escaped = source
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "const __t = `{}`;\nmodule.exports = __t; module.exports.default = __t;\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: source,
+            });
+        }
+        _ => {}
+    }
+
     let transpiled = bun_transpile::transpile_file(path, &source)?;
     let analysis = rewriter::rewrite_to_iife(&transpiled.code)?;
     Ok(PreparedModule {

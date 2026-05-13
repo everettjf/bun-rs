@@ -16,3 +16,7 @@ oxc_ast = "0.129"
 oxc_ast_visit = "0.129"
 oxc_span = "0.129"
 bun-transpile = { workspace = true }
+json5 = "0.4"
+serde_json = "1"
+toml = "0.9"
+serde_yaml = "0.9"

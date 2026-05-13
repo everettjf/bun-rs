@@ -183,6 +183,17 @@ pub fn install_bun(ctx: &Context) {
         Ok(Value::new_string(args.context(), &s))
     });
 
+    // Bun.TOML — same JSON-pipe approach as YAML.
+    bind(ctx, &bun, "__rust_toml_to_json", |args| {
+        let src = args.get(0).to_string();
+        let v: toml::Value =
+            toml::from_str(&src).map_err(|e| format!("TOML parse error: {e}"))?;
+        let j: serde_json::Value =
+            serde_json::to_value(&v).map_err(|e| e.to_string())?;
+        let s = serde_json::to_string(&j).map_err(|e| e.to_string())?;
+        Ok(Value::new_string(args.context(), &s))
+    });
+
     // Bun.markdown — backed by pulldown-cmark (CommonMark + GFM tables).
     bind(ctx, &bun, "__rust_markdown_html", |args| {
         use pulldown_cmark::{html, Options, Parser};
@@ -1800,6 +1811,24 @@ const BUN_HELPERS: &str = r##"
     },
   };
   globalThis.YAML = Bun.YAML;
+
+  // ── Bun.TOML — same JSON-pipe approach. .parse only — TOML doesn't
+  // have a standard stringifier in Bun.
+  Bun.TOML = {
+    parse(src) {
+      let raw;
+      if (typeof src === "string") raw = src;
+      else if (src instanceof Blob) raw = src._bytes ? new TextDecoder("utf-8").decode(src._bytes) : "";
+      else if (src instanceof Uint8Array) raw = new TextDecoder("utf-8").decode(src);
+      else if (src instanceof ArrayBuffer) raw = new TextDecoder("utf-8").decode(new Uint8Array(src));
+      else if (ArrayBuffer.isView(src)) raw = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
+      else raw = String(src ?? "");
+      let json;
+      try { json = Bun.__rust_toml_to_json(raw); }
+      catch (e) { throw new SyntaxError(e && e.message ? e.message : String(e)); }
+      return JSON.parse(json);
+    },
+  };
 
   // ── Bun.CSRF already added; Bun.RedisClient stub ────────────────────
   Bun.RedisClient = class RedisClient { constructor(){ throw new Error("Bun.RedisClient not implemented"); } };
