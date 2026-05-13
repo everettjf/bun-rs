@@ -746,6 +746,15 @@ fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
         Ok(Value::new_string(args.context(), &real))
     });
 
+    // fs.realpathSync.native(path) — Node attaches a libuv-backed version
+    // as a method on the realpathSync function. Same semantics as the
+    // plain realpathSync above; we just need the function to exist.
+    if let Ok(rps) = obj.get_property("realpathSync") {
+        if let Ok(rps_obj) = rps.to_object() {
+            let _ = rps_obj.set_property("native", &rps);
+        }
+    }
+
     bind(ctx, obj, "mkdtempSync", |args| {
         let prefix = args.get(0).to_string();
         let nano = std::time::SystemTime::now()

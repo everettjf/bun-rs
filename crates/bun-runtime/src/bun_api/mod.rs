@@ -2118,7 +2118,22 @@ fn build_jsc_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             startSamplingProfiler: () => {},
             samplingProfilerStackTraces: () => [],
             profile: (fn) => fn(),
-            callerSourceOrigin: () => "",
+            callerSourceOrigin: () => {
+              // Best-effort: walk the stack and pick the first non-internal
+              // frame that has a real file path. Tests use this to identify
+              // the calling test file (e.g. Bun.jest(source) → file:// URL).
+              try {
+                const stack = new Error().stack || "";
+                const lines = stack.split("\n");
+                for (const ln of lines) {
+                  const m = ln.match(/\(?(\/[^()\s:]+)(?::\d+(?::\d+)?)?\)?$/);
+                  if (m && m[1] && !m[1].includes("[") && !m[1].startsWith("/<")) {
+                    return "file://" + m[1];
+                  }
+                }
+              } catch {}
+              return "";
+            },
             setTimeZone: () => {},
             noInline: (fn) => fn,
             noFTL: (fn) => fn,

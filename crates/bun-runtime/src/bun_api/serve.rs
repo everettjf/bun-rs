@@ -72,6 +72,52 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             .get_property("port")
             .map(|v| v.to_number() as u16)
             .unwrap_or(3000);
+
+        // If the caller used `routes` instead of `fetch`, synthesize a
+        // fetch handler that dispatches by URL path and HTTP method. This
+        // matches Bun's `routes:` config shape (each value is either a
+        // handler function, a `{ GET, POST, … }` map, a Response, or a
+        // string/Bun.file body).
+        let has_fetch = opts_obj
+            .get_property("fetch")
+            .map(|v| v.to_object().map(|o| o.is_function()).unwrap_or(false))
+            .unwrap_or(false);
+        let has_routes = opts_obj
+            .get_property("routes")
+            .map(|v| v.is_object())
+            .unwrap_or(false);
+        if !has_fetch && has_routes {
+            let synth = args.context().eval(
+                r#"(function(routes){
+                    return async function (req) {
+                        const url = new URL(req.url);
+                        const path = url.pathname;
+                        const method = (req.method || "GET").toUpperCase();
+                        let route = routes[path];
+                        if (route === undefined) {
+                            // Try a one-level fall-through for `/`.
+                            route = routes["/" + path.split("/").filter(Boolean)[0]];
+                        }
+                        if (route === undefined) return new Response("Not Found", { status: 404 });
+                        if (typeof route === "function") return route(req);
+                        if (route instanceof Response) return route;
+                        if (typeof route === "string") return new Response(route);
+                        if (route && typeof route === "object") {
+                            const fn = route[method] || route.fetch;
+                            if (typeof fn === "function") return fn(req);
+                            return new Response("Method Not Allowed", { status: 405 });
+                        }
+                        return new Response("Not Found", { status: 404 });
+                    };
+                })"#,
+                Some("[serve-routes-wrap]"),
+            ).map_err(|e| e.to_string())?;
+            let routes_v = opts_obj.get_property("routes").map_err(|e| e.to_string())?;
+            let synth_o = synth.to_object().map_err(|e| e.to_string())?;
+            let fetch_fn = synth_o.call(None, &[routes_v]).map_err(|e| e.to_string())?;
+            opts_obj.set_property("fetch", &fetch_fn).map_err(|e| e.to_string())?;
+        }
+
         let handler_val = opts_obj
             .get_property("fetch")
             .map_err(|e| e.to_string())?;

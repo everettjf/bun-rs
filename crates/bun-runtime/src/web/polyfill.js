@@ -291,6 +291,11 @@
     static error() {
       return new Response("", { status: 0 });
     }
+    static redirect(url, status) {
+      const r = new Response("", { status: status || 302 });
+      try { r.headers.set("location", String(url)); } catch {}
+      return r;
+    }
   }
   g.Response = Response;
 

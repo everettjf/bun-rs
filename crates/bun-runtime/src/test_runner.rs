@@ -314,6 +314,12 @@ fn install_globals(ctx: &Context) {
         Some("[test-globals]"),
     )
     .expect("install test globals");
+
+    // Eagerly load bun:test so its globals (mock, vi, jest, spyOn) are
+    // visible to test files that don't `import "bun:test"` themselves
+    // (e.g. test files that go through Bun.jest(source) or the bun:jsc
+    // → callerSourceOrigin path).
+    let _ = crate::bun_api::load_bun_builtin(ctx, "test");
 }
 
 const GLOBALS: &str = r#"
