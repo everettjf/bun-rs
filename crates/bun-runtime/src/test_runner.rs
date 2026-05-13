@@ -680,6 +680,10 @@ const GLOBALS: &str = r#"
       },
       toMatchObject(partial) {
         function matches(rec, part) {
+          // Asymmetric matcher anywhere in the partial: delegate to it.
+          if (part && part.__bun_match && typeof part.asymmetricMatch === "function") {
+            return part.asymmetricMatch(rec);
+          }
           if (part === null || typeof part !== "object") return deepEq(rec, part);
           if (rec === null || typeof rec !== "object") return false;
           if (Array.isArray(part)) {
@@ -793,6 +797,7 @@ const GLOBALS: &str = r#"
         check(t === "string" || t === "number" || t === "boolean" || t === "bigint" || t === "symbol" || received === null || received === undefined, undefined, "toBePrimitive");
       },
       toBeNullish() { check(received === null || received === undefined, undefined, "toBeNullish"); },
+      toBeNil() { check(received === null || received === undefined, undefined, "toBeNil"); },
       toBeNonEmptyString() { check(typeof received === "string" && received.length > 0, undefined, "toBeNonEmptyString"); },
       toHaveBeenCalled() {
         check(received && received.mock && received.mock.calls && received.mock.calls.length > 0, undefined, "toHaveBeenCalled");
