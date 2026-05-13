@@ -578,6 +578,13 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
                         throw new Error("Cannot resolve " + JSON.stringify(spec));
                     }}
                     if (NODE_BUILTINS.has(spec)) return "node:" + spec;
+                    // Bare names (no '/', no '.', no protocol): treat as
+                    // package and require resolver-side success. We don't
+                    // have a real package resolver here, so throw with
+                    // Bun's error shape.
+                    if (!spec.startsWith("/") && !spec.startsWith("./") && !spec.startsWith("../") && !/^([a-z][a-z0-9+.-]*):/i.test(spec)) {{
+                        throw new Error("Cannot find package '" + spec + "'");
+                    }}
                     return toFileUrl(spec);
                 }};
                 m.require = globalThis.require;
