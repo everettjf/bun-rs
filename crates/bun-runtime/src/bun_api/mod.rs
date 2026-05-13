@@ -164,6 +164,38 @@ const BUN_HELPERS: &str = r#"
   Bun.JSONC = globalThis.JSON5;
   Bun.YAML = Bun.YAML || globalThis.YAML;
 
+  // Bun.JSONL — newline-delimited JSON. parse(str) returns array of values.
+  Bun.JSONL = {
+    parse(text) {
+      const out = [];
+      const s = String(text);
+      if (s.length === 0) return out;
+      let line = "";
+      let inStr = false, esc = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (esc) { line += c; esc = false; continue; }
+        if (c === "\\" && inStr) { line += c; esc = true; continue; }
+        if (c === '"') { inStr = !inStr; line += c; continue; }
+        if (c === "\n" && !inStr) {
+          if (line.trim().length > 0) out.push(JSON.parse(line));
+          line = "";
+        } else {
+          line += c;
+        }
+      }
+      if (line.trim().length > 0) out.push(JSON.parse(line));
+      return out;
+    },
+    stringify(values, replacer, space) {
+      if (!Array.isArray(values)) {
+        return JSON.stringify(values, replacer, space) + "\n";
+      }
+      return values.map(v => JSON.stringify(v, replacer, space)).join("\n") + "\n";
+    },
+  };
+  globalThis.JSONL = Bun.JSONL;
+
   // ── Bun.markdown / Bun.Markdown (stub) — extremely minimal HTML-ish ─
   // Real test coverage of CommonMark needs a full markdown engine; we
   // ship a passthrough that at least lets test files load.

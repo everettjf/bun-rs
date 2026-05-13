@@ -9,3 +9,4 @@ hello
 invalid.css
 mydb.sqlite
 *.sqlite
+*Object*
