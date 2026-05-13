@@ -191,13 +191,15 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
             });
         }
         "txt" | "html" | "css" => {
-            // Default import is the raw text body.
+            // Bun's behavior: require('*.txt') returns { default: text }
+            // (with __esModule true). ESM `import x from '*.txt'` unwraps
+            // via .default → text.
             let escaped = source
                 .replace('\\', "\\\\")
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "module.exports = `{}`;\n",
+                "const __t = `{}`;\nmodule.exports = {{ __esModule: true, default: __t }};\n",
                 escaped
             );
             return Ok(PreparedModule {
