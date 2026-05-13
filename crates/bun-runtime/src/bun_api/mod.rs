@@ -98,12 +98,13 @@ pub fn install_bun(ctx: &Context) {
     bind(ctx, &bun, "__rust_markdown_html", |args| {
         use pulldown_cmark::{html, Options, Parser};
         let src = args.get(0).to_string();
+        // Bun's tests expect literal punctuation (no `---` → `—`, no `"` →
+        // `“”`). Skip ENABLE_SMART_PUNCTUATION.
         let mut opts = Options::empty();
         opts.insert(Options::ENABLE_TABLES);
         opts.insert(Options::ENABLE_STRIKETHROUGH);
         opts.insert(Options::ENABLE_TASKLISTS);
         opts.insert(Options::ENABLE_FOOTNOTES);
-        opts.insert(Options::ENABLE_SMART_PUNCTUATION);
         opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
         let parser = Parser::new_ext(&src, opts);
         let mut out = String::new();
@@ -1197,11 +1198,24 @@ const BUN_HELPERS: &str = r#"
   // ── Bun.YAML — serde_yaml backed ────────────────────────────────────
   Bun.YAML = {
     parse(src) {
-      if (src instanceof Uint8Array) src = new TextDecoder("utf-8").decode(src);
-      else if (src instanceof ArrayBuffer) src = new TextDecoder("utf-8").decode(new Uint8Array(src));
-      else if (ArrayBuffer.isView(src)) src = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
-      else src = String(src ?? "");
-      const json = Bun.__rust_yaml_to_json(src);
+      // Accept string | Uint8Array | ArrayBuffer | any TypedArray | Blob | Buffer.
+      let raw;
+      if (typeof src === "string") {
+        raw = src;
+      } else if (src instanceof Blob) {
+        raw = src._bytes ? new TextDecoder("utf-8").decode(src._bytes) : "";
+      } else if (src instanceof Uint8Array) {
+        raw = new TextDecoder("utf-8").decode(src);
+      } else if (src instanceof ArrayBuffer) {
+        raw = new TextDecoder("utf-8").decode(new Uint8Array(src));
+      } else if (ArrayBuffer.isView(src)) {
+        raw = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
+      } else {
+        raw = String(src ?? "");
+      }
+      // Strip trailing null bytes (typed-array tests pad to alignment).
+      while (raw.length > 0 && raw.charCodeAt(raw.length - 1) === 0) raw = raw.slice(0, -1);
+      const json = Bun.__rust_yaml_to_json(raw);
       return JSON.parse(json);
     },
     stringify(v, _opts) {
