@@ -646,10 +646,12 @@
   // self getter — alias for globalThis. Bun's tests check this is a getter
   // on the global, so use defineProperty.
   if (!Object.getOwnPropertyDescriptor(g, "self") || !Object.getOwnPropertyDescriptor(g, "self").get) {
-    Object.defineProperty(g, "self", { get() { return g; }, configurable: true });
+    let _self = g;
+    Object.defineProperty(g, "self", { get() { return _self; }, set(v) { _self = v; }, configurable: true, enumerable: true });
   }
   if (!Object.getOwnPropertyDescriptor(g, "window") || !Object.getOwnPropertyDescriptor(g, "window").get) {
-    Object.defineProperty(g, "window", { get() { return g; }, configurable: true });
+    let _window = g;
+    Object.defineProperty(g, "window", { get() { return _window; }, set(v) { _window = v; }, configurable: true, enumerable: true });
   }
   if (typeof g.frames === "undefined") g.frames = g;
 
