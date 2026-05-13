@@ -264,9 +264,10 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
 fn discover(root: &Path, out: &mut Vec<PathBuf>) {
     if root.is_file() {
-        if is_test_file(root) {
-            out.push(root.canonicalize().unwrap_or_else(|_| root.to_path_buf()));
-        }
+        // When the user passes a file path explicitly, run it regardless
+        // of naming convention. Only apply the *.test.* filter to globbed
+        // directory discovery.
+        out.push(root.canonicalize().unwrap_or_else(|_| root.to_path_buf()));
         return;
     }
     if !root.is_dir() {
