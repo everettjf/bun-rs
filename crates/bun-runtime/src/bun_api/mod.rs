@@ -73,6 +73,27 @@ pub fn install_bun(ctx: &Context) {
     file::install(ctx, &bun);
     serve::install(ctx, &bun);
 
+    // Bun.YAML — backed by serde_yaml. We parse to serde_yaml::Value, then
+    // convert via serde_json to a JSON string, then JS-side JSON.parse.
+    // This avoids manually mapping every YAML scalar shape to a JSC value.
+    bind(ctx, &bun, "__rust_yaml_to_json", |args| {
+        let src = args.get(0).to_string();
+        let v: serde_yaml::Value =
+            serde_yaml::from_str(&src).map_err(|e| format!("YAML parse error: {e}"))?;
+        // Convert YAML Value → JSON Value. YAML allows non-string keys (e.g.
+        // numbers, sequences); JSON requires string keys, so we stringify.
+        let j = yaml_to_json(&v);
+        let s = serde_json::to_string(&j).map_err(|e| e.to_string())?;
+        Ok(Value::new_string(args.context(), &s))
+    });
+    bind(ctx, &bun, "__rust_yaml_stringify", |args| {
+        let json_str = args.get(0).to_string();
+        let j: serde_json::Value =
+            serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
+        let s = serde_yaml::to_string(&j).map_err(|e| e.to_string())?;
+        Ok(Value::new_string(args.context(), &s))
+    });
+
     // Bun.markdown — backed by pulldown-cmark (CommonMark + GFM tables).
     bind(ctx, &bun, "__rust_markdown_html", |args| {
         use pulldown_cmark::{html, Options, Parser};
@@ -1173,11 +1194,22 @@ const BUN_HELPERS: &str = r#"
   };
   Bun.glob = (pattern) => new Bun.Glob(pattern);
 
-  // ── Bun.YAML (stub) ─────────────────────────────────────────────────
+  // ── Bun.YAML — serde_yaml backed ────────────────────────────────────
   Bun.YAML = {
-    parse: (s) => { throw new Error("Bun.YAML.parse not implemented"); },
-    stringify: (v) => { throw new Error("Bun.YAML.stringify not implemented"); },
+    parse(src) {
+      if (src instanceof Uint8Array) src = new TextDecoder("utf-8").decode(src);
+      else if (src instanceof ArrayBuffer) src = new TextDecoder("utf-8").decode(new Uint8Array(src));
+      else if (ArrayBuffer.isView(src)) src = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
+      else src = String(src ?? "");
+      const json = Bun.__rust_yaml_to_json(src);
+      return JSON.parse(json);
+    },
+    stringify(v, _opts) {
+      const json = JSON.stringify(v);
+      return Bun.__rust_yaml_stringify(json);
+    },
   };
+  globalThis.YAML = Bun.YAML;
 
   // ── Bun.CSRF already added; Bun.RedisClient stub ────────────────────
   Bun.RedisClient = class RedisClient { constructor(){ throw new Error("Bun.RedisClient not implemented"); } };
@@ -1460,6 +1492,46 @@ const BUN_HELPERS: &str = r#"
 
 })();
 "#;
+
+// Convert a serde_yaml::Value into a serde_json::Value. YAML allows
+// non-string mapping keys (numbers, sequences, etc.); JSON does not, so
+// those keys are coerced to strings.
+fn yaml_to_json(v: &serde_yaml::Value) -> serde_json::Value {
+    use serde_json::Value as J;
+    use serde_yaml::Value as Y;
+    match v {
+        Y::Null => J::Null,
+        Y::Bool(b) => J::Bool(*b),
+        Y::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                J::Number(serde_json::Number::from(i))
+            } else if let Some(u) = n.as_u64() {
+                J::Number(serde_json::Number::from(u))
+            } else if let Some(f) = n.as_f64() {
+                serde_json::Number::from_f64(f).map(J::Number).unwrap_or(J::Null)
+            } else {
+                J::Null
+            }
+        }
+        Y::String(s) => J::String(s.clone()),
+        Y::Sequence(seq) => J::Array(seq.iter().map(yaml_to_json).collect()),
+        Y::Mapping(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                let key = match k {
+                    Y::String(s) => s.clone(),
+                    Y::Number(n) => n.to_string(),
+                    Y::Bool(b) => b.to_string(),
+                    Y::Null => "null".to_string(),
+                    other => format!("{other:?}"),
+                };
+                out.insert(key, yaml_to_json(v));
+            }
+            J::Object(out)
+        }
+        Y::Tagged(t) => yaml_to_json(&t.value),
+    }
+}
 
 // `bun:jsc` — JSC internals exposed by Bun. We can't honor the contract
 // (lots of it is "memory layout of the C++ VM") but a permissive stub keeps
