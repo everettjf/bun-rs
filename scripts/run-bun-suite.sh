@@ -46,8 +46,22 @@ while IFS= read -r f; do
   fi
   rel="${f#$BUN_TESTS/}"
   # </dev/null on stdin so the inner command can't steal lines from the
-  # `while read` loop driving us.
-  out=$(perl -e 'alarm shift; exec @ARGV' "$TIMEOUT_SEC" "$BUN_RS" test "$f" </dev/null 2>&1)
+  # `while read` loop driving us. Use `setsid` + `kill -- -$pgid` so when
+  # the timeout fires we kill bun-rs AND any subprocesses it spawned.
+  out=$(perl -e '
+    use POSIX qw(setsid);
+    my $alarm = shift @ARGV;
+    my $pid = fork();
+    die "fork: $!" unless defined $pid;
+    if ($pid == 0) {
+      setsid();
+      exec @ARGV or die "exec: $!";
+    }
+    local $SIG{ALRM} = sub { kill "KILL", -$pid; exit 142; };
+    alarm $alarm;
+    waitpid($pid, 0);
+    exit($? >> 8);
+  ' "$TIMEOUT_SEC" "$BUN_RS" test "$f" </dev/null 2>&1)
   rc=$?
 
   status=""
