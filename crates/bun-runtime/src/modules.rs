@@ -474,22 +474,18 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
     let import_dir2 = dirname.clone();
     let _ = ctx.eval(
         &format!(
-            r#"
+            r##"
             ((m) => {{
                 const path = require("node:path");
                 function toFileUrl(p) {{
-                    // Already a URL or non-file specifier (node:, http:, npm:, bun:):
                     if (/^([a-z][a-z0-9+.-]*):/i.test(p) || p.startsWith("file://")) {{
                         return p.startsWith("file://") ? p : p;
                     }}
                     let abs = path.isAbsolute(p) ? p : path.resolve({:?}, p);
                     abs = path.normalize(abs);
-                    // Percent-encode the path, keeping `/`.
                     const enc = encodeURI(abs).replace(/#/g, "%23");
                     return "file://" + enc;
                 }}
-                // Node built-in names: bare "path" / "fs" / etc resolves to
-                // "node:path" / "node:fs". Mirror Bun's behavior.
                 const NODE_BUILTINS = new Set([
                     "assert","async_hooks","buffer","child_process","cluster","console",
                     "constants","crypto","dgram","diagnostics_channel","dns","domain","events",
@@ -502,13 +498,16 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
                     if (typeof spec !== "string" || spec.length === 0) {{
                         throw new TypeError("Invalid specifier");
                     }}
+                    if (spec.charAt(0) === "#") {{
+                        throw new Error("Cannot resolve " + JSON.stringify(spec));
+                    }}
                     if (NODE_BUILTINS.has(spec)) return "node:" + spec;
                     return toFileUrl(spec);
                 }};
                 m.require = globalThis.require;
                 m.path = {:?};
             }})
-            "#,
+            "##,
             import_dir2, filename
         ),
         Some("[import.meta.resolve]"),

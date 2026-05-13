@@ -1775,6 +1775,22 @@ const BUN_HELPERS: &str = r##"
   };
   Bun.glob = (pattern) => new Bun.Glob(pattern);
 
+  // ── Bun.FFI — small surface: viewSource + namespace ─────────────────
+  Bun.FFI = Bun.FFI || {};
+  Bun.FFI.viewSource = function (symbols) {
+    if (!symbols || typeof symbols !== "object") {
+      throw new TypeError("Expected an object");
+    }
+    const out = [];
+    for (const [name, def] of Object.entries(symbols)) {
+      if (def === null || typeof def !== "object") {
+        throw new TypeError("Expected an object");
+      }
+      out.push("// " + name);
+    }
+    return out.join("\n");
+  };
+
   // ── Bun.YAML — serde_yaml backed ────────────────────────────────────
   Bun.YAML = {
     parse(src) {
@@ -1822,7 +1838,12 @@ const BUN_HELPERS: &str = r##"
       else if (src instanceof Uint8Array) raw = new TextDecoder("utf-8").decode(src);
       else if (src instanceof ArrayBuffer) raw = new TextDecoder("utf-8").decode(new Uint8Array(src));
       else if (ArrayBuffer.isView(src)) raw = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
-      else raw = String(src ?? "");
+      else {
+        // Bun rejects non-string/non-bytes inputs. Match.
+        const err = new TypeError("Bun.TOML.parse: expected a string or Buffer, got " + (src === null ? "null" : typeof src));
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
       let json;
       try { json = Bun.__rust_toml_to_json(raw); }
       catch (e) { throw new SyntaxError(e && e.message ? e.message : String(e)); }
