@@ -108,7 +108,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                "module.exports = JSON.parse(`{}`);\n",
                 escaped
             );
             return Ok(PreparedModule {
@@ -119,7 +119,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 original_source: source,
             });
         }
-        "jsonc" | "json5" => {
+        "jsonc" | "json5" | "lock" => {
             // JSONC has // comments; JSON5 has comments + trailing commas
             // + unquoted keys + single quotes. Parse with the json5 crate
             // (which is JSON5-strict superset of JSONC) then emit as JSON
@@ -133,7 +133,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                "module.exports = JSON.parse(`{}`);\n",
                 escaped
             );
             return Ok(PreparedModule {
@@ -156,7 +156,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                "module.exports = JSON.parse(`{}`);\n",
                 escaped
             );
             return Ok(PreparedModule {
@@ -179,7 +179,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "const __j = JSON.parse(`{}`); module.exports = __j; if (__j !== null && typeof __j === 'object') {{ try {{ __j.default = __j; }} catch {{}} }}\n",
+                "module.exports = JSON.parse(`{}`);\n",
                 escaped
             );
             return Ok(PreparedModule {
@@ -197,7 +197,7 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 .replace('`', "\\`")
                 .replace("${", "\\${");
             let wrapped = format!(
-                "const __t = `{}`;\nmodule.exports = __t; module.exports.default = __t;\n",
+                "module.exports = `{}`;\n",
                 escaped
             );
             return Ok(PreparedModule {
