@@ -40,3 +40,4 @@ digest = "0.10"
 rand = "0.9"
 uuid = { version = "1", features = ["v4"] }
 subtle = "2"
+pulldown-cmark = "0.13"

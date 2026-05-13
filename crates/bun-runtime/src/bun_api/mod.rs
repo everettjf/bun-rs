@@ -73,6 +73,23 @@ pub fn install_bun(ctx: &Context) {
     file::install(ctx, &bun);
     serve::install(ctx, &bun);
 
+    // Bun.markdown — backed by pulldown-cmark (CommonMark + GFM tables).
+    bind(ctx, &bun, "__rust_markdown_html", |args| {
+        use pulldown_cmark::{html, Options, Parser};
+        let src = args.get(0).to_string();
+        let mut opts = Options::empty();
+        opts.insert(Options::ENABLE_TABLES);
+        opts.insert(Options::ENABLE_STRIKETHROUGH);
+        opts.insert(Options::ENABLE_TASKLISTS);
+        opts.insert(Options::ENABLE_FOOTNOTES);
+        opts.insert(Options::ENABLE_SMART_PUNCTUATION);
+        opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+        let parser = Parser::new_ext(&src, opts);
+        let mut out = String::new();
+        html::push_html(&mut out, parser);
+        Ok(Value::new_string(args.context(), &out))
+    });
+
     bind(ctx, &bun, "sleep", |args| {
         // Blocking sleep — matches Bun.sleep semantics from JS (the caller
         // typically awaits the returned Promise).
@@ -214,20 +231,60 @@ const BUN_HELPERS: &str = r#"
   };
   globalThis.JSONL = Bun.JSONL;
 
-  // ── Bun.markdown / Bun.Markdown (stub) — extremely minimal HTML-ish ─
-  // Real test coverage of CommonMark needs a full markdown engine; we
-  // ship a passthrough that at least lets test files load.
-  Bun.markdown = function (src, _opts) {
-    const html = String(src)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    return { html, headings: [], render: () => html };
+  // ── Bun.markdown / Bun.Markdown — pulldown-cmark backed ─────────────
+  // Accepts string | Buffer | Uint8Array. Returns object { html, headings,
+  // render }. Bun.Markdown.html(src, opts) and .render(src, opts) are
+  // both supported. Options:
+  //   { headings: { ids: true } } — inject id="slug" on h1..h6
+  function _decodeMdInput(src) {
+    if (src instanceof Uint8Array) return new TextDecoder("utf-8").decode(src);
+    if (src instanceof ArrayBuffer) return new TextDecoder("utf-8").decode(new Uint8Array(src));
+    if (ArrayBuffer.isView(src)) return new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
+    return String(src ?? "");
+  }
+  function _slug(s) {
+    return String(s)
+      .toLowerCase()
+      .replace(/<[^>]*>/g, "")  // strip inline HTML tags
+      .replace(/[^\w\s-]/g, "")  // strip punctuation
+      .replace(/\s+/g, "-")      // spaces to hyphens
+      .replace(/-+/g, "-")       // collapse hyphens
+      .replace(/^-|-$/g, "");    // trim hyphens
+  }
+  function _injectHeadingIds(html) {
+    return html.replace(/<h([1-6])>([\s\S]*?)<\/h\1>/g, (_, level, inner) => {
+      const text = inner.replace(/<[^>]*>/g, "");
+      const id = _slug(text);
+      if (!id) return `<h${level}>${inner}</h${level}>`;
+      return `<h${level} id="${id}">${inner}</h${level}>`;
+    });
+  }
+  function _renderMarkdownHtml(src, opts) {
+    const decoded = _decodeMdInput(src);
+    let html = Bun.__rust_markdown_html(decoded);
+    if (opts && opts.headings && opts.headings.ids) {
+      html = _injectHeadingIds(html);
+    }
+    return html;
+  }
+  Bun.markdown = function (src, opts) {
+    const html = _renderMarkdownHtml(src, opts);
+    // Build a headings list for callers that introspect.
+    const headings = [];
+    const re = /<h([1-6])(?:\s+id="([^"]+)")?>([\s\S]*?)<\/h\1>/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      headings.push({ level: +m[1], id: m[2] || _slug(m[3].replace(/<[^>]*>/g, "")), text: m[3].replace(/<[^>]*>/g, "") });
+    }
+    return { html, headings, render: (newOpts) => _renderMarkdownHtml(src, newOpts || opts) };
   };
-  Bun.markdown.render = (src, opts) => Bun.markdown(src, opts).html;
+  Bun.markdown.render = (src, opts) => _renderMarkdownHtml(src, opts);
+  Bun.markdown.html = (src, opts) => _renderMarkdownHtml(src, opts);
+  Bun.markdown.ansi = (src) => _decodeMdInput(src); // no ANSI styling, return text
   Bun.Markdown = Bun.markdown;
-  Bun.Markdown.html = (src, opts) => Bun.markdown(src, opts).html;
+  Bun.Markdown.html = Bun.markdown.html;
   Bun.Markdown.render = Bun.markdown.render;
+  Bun.Markdown.ansi = Bun.markdown.ansi;
 
   // ── Bun.secrets — in-memory keychain stub ───────────────────────────
   (function () {
