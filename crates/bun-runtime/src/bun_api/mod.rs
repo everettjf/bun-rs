@@ -1598,14 +1598,66 @@ const BUN_HELPERS: &str = r##"
   Bun.$.Shell = function Shell() {
     if (!(this instanceof Shell)) return new Shell();
     const shell = function shellTag(strings, ...vals) {
-      // Apply the instance's env / cwd by wrapping the command.
-      const result = Bun.$(strings, ...vals);
-      return result;
+      // Honor the instance's _cwd / _env by routing through Bun.$ with
+      // an options object as an extra hint.
+      return Bun.$.__withOptions({ cwd: shell._cwd, env: shell._env })(strings, ...vals);
     };
     Object.setPrototypeOf(shell, Shell.prototype);
-    shell._env = {};
+    shell._env = null;
     shell._cwd = null;
     return shell;
+  };
+  Bun.$.__withOptions = function (opts) {
+    return function (strings, ...values) {
+      const cp = require("node:child_process");
+      let cmd = "";
+      if (Array.isArray(strings)) {
+        cmd = strings[0];
+        for (let i = 0; i < values.length; i++) cmd += String(values[i]) + (strings[i + 1] || "");
+      } else {
+        cmd = String(strings);
+      }
+      const spawnOpts = {};
+      if (opts.cwd) spawnOpts.cwd = String(opts.cwd);
+      if (opts.env) spawnOpts.env = { ...process.env, ...opts.env };
+      const r = cp.spawnSync("sh", ["-c", cmd], spawnOpts);
+      // Reuse the result shape from Bun.$ above.
+      return Bun.$.__wrapShellResult(r);
+    };
+  };
+  Bun.$.__wrapShellResult = function (r) {
+    const obj = {
+      exitCode: r.status === null ? -1 : r.status,
+      stdout: r.stdout || new Uint8Array(0),
+      stderr: r.stderr || new Uint8Array(0),
+      stdoutText: (r.stdout || new Uint8Array(0)).toString(),
+      stderrText: (r.stderr || new Uint8Array(0)).toString(),
+      async text() { return new TextDecoder().decode(this.stdout); },
+      async json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
+      async bytes() { return this.stdout; },
+      async arrayBuffer() { return this.stdout.buffer.slice(0); },
+      async lines() { return new TextDecoder().decode(this.stdout).split("\n"); },
+      then(onFulfilled, onRejected) {
+        const plain = {
+          exitCode: this.exitCode, stdout: this.stdout, stderr: this.stderr,
+          stdoutText: this.stdoutText, stderrText: this.stderrText,
+          text: this.text.bind(this), json: this.json.bind(this),
+          bytes: this.bytes.bind(this), arrayBuffer: this.arrayBuffer.bind(this),
+          lines: this.lines.bind(this), quiet: this.quiet.bind(this), nothrow: this.nothrow.bind(this),
+        };
+        try {
+          const v = onFulfilled ? onFulfilled(plain) : plain;
+          return Promise.resolve(v);
+        } catch (e) {
+          if (onRejected) { try { return Promise.resolve(onRejected(e)); } catch (e2) { return Promise.reject(e2); } }
+          return Promise.reject(e);
+        }
+      },
+      catch(onRejected) { return this.then(undefined, onRejected); },
+      finally(fn) { try { fn(); } catch {} return this.then(v => v); },
+      quiet() { return this; }, nothrow() { return this; }, env() { return this; }, cwd() { return this; },
+    };
+    return obj;
   };
   Bun.$.Shell.prototype = Object.create(Function.prototype);
   Bun.$.Shell.prototype.cwd = function (d) { this._cwd = d; return this; };

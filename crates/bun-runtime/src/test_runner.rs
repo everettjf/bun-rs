@@ -158,6 +158,10 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                         }
                         try {
                             for (const h of t.beforeEach) await runHook(h);
+                            // Reset assertion-counter state per test.
+                            globalThis.__bun_assertion_state.count = 0;
+                            globalThis.__bun_assertion_state.expected = null;
+                            globalThis.__bun_assertion_state.hasAny = false;
                             let result;
                             try {
                                 result = await (t.fn.length >= 1
@@ -167,6 +171,13 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     })
                                   : t.fn());
                                 void result;
+                                // Validate expect.assertions(N) / hasAssertions().
+                                const st = globalThis.__bun_assertion_state;
+                                if (st.expected === "any" && !st.hasAny) {
+                                    throw new Error("expect.hasAssertions(): no assertions were called");
+                                } else if (typeof st.expected === "number" && st.count !== st.expected) {
+                                    throw new Error(`expect.assertions(${st.expected}): expected ${st.expected} assertions but got ${st.count}`);
+                                }
                                 if (t.failing) {
                                     throw new Error("test was marked .failing but passed");
                                 }
@@ -251,6 +262,11 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
         "tests:  {} passed, {} failed, {} skipped",
         total_pass, total_fail, total_skipped
     );
+    // Bun-compatible footer lines so test files that grep stderr for
+    // " N pass\n" / " N fail\n" / " N skip\n" can succeed.
+    eprintln!(" {} pass", total_pass);
+    eprintln!(" {} fail", total_fail);
+    eprintln!(" {} skip", total_skipped);
     if total_fail > 0 {
         eprintln!("\nfailed in:");
         for f in &failed_files {
@@ -896,6 +912,8 @@ const GLOBALS: &str = r#"
   }
 
   g.expect = function (received) {
+    g.__bun_assertion_state.count++;
+    g.__bun_assertion_state.hasAny = true;
     // expect() with no args: just a thin wrapper with .fail / .pass /
     // .unreachable. Bun's tests use `expect().fail("...")` idiomatically.
     if (arguments.length === 0) {
@@ -985,8 +1003,13 @@ const GLOBALS: &str = r#"
     const d = digits == null ? 2 : digits;
     return asymmetric("CloseTo", (a) => typeof a === "number" && Math.abs(a - n) < Math.pow(10, -d) / 2);
   };
-  g.expect.assertions = function () {};
-  g.expect.hasAssertions = function () {};
+  g.__bun_assertion_state = g.__bun_assertion_state || { count: 0, expected: null, hasAny: false };
+  g.expect.assertions = function (n) {
+    g.__bun_assertion_state.expected = n;
+  };
+  g.expect.hasAssertions = function () {
+    g.__bun_assertion_state.expected = "any";
+  };
   g.expect.unreachable = function (msg) {
     if (msg instanceof Error) throw msg;
     if (typeof msg === "string" && msg.length) throw new Error(msg);
