@@ -258,7 +258,41 @@ const BUN_HELPERS: &str = r#"
     return go(v, 0);
   };
   Bun.inspect.custom = Symbol.for("nodejs.util.inspect.custom");
-  Bun.inspect.table = (rows) => Bun.inspect(rows);
+  Bun.inspect.table = function (rows, _opts) {
+    // Bun returns "" for non-object / non-array inputs.
+    if (rows === null || rows === undefined) return "";
+    if (typeof rows !== "object") return "";
+    // Minimal table: an array of objects rendered as a 2D ASCII-like table.
+    if (Array.isArray(rows)) {
+      if (rows.length === 0) return "";
+      const cols = new Set();
+      for (const r of rows) {
+        if (r && typeof r === "object") for (const k of Object.keys(r)) cols.add(k);
+      }
+      const colList = ["(index)", ...cols];
+      const grid = [colList];
+      rows.forEach((r, i) => {
+        const row = [String(i)];
+        for (const c of cols) row.push(r && typeof r === "object" ? Bun.inspect(r[c]) : Bun.inspect(r));
+        grid.push(row);
+      });
+      // Compute column widths.
+      const widths = colList.map((_, i) => Math.max(...grid.map(g => String(g[i] ?? "").length)));
+      const sep = "│";
+      const fmt = (g) => sep + g.map((v, i) => " " + String(v ?? "").padEnd(widths[i]) + " ").join(sep) + sep;
+      const border = "┌" + widths.map(w => "─".repeat(w + 2)).join("┬") + "┐";
+      const bordertop = "├" + widths.map(w => "─".repeat(w + 2)).join("┼") + "┤";
+      const borderbot = "└" + widths.map(w => "─".repeat(w + 2)).join("┴") + "┘";
+      const lines = [border, fmt(grid[0]), bordertop];
+      for (let i = 1; i < grid.length; i++) lines.push(fmt(grid[i]));
+      lines.push(borderbot);
+      return lines.join("\n") + "\n";
+    }
+    // Plain object: tabulate properties.
+    const keys = Object.keys(rows);
+    if (keys.length === 0) return "";
+    return Bun.inspect.table(keys.map(k => ({ key: k, value: rows[k] })));
+  };
 
   // ── Bun.hash: fnv-1a 32-bit (cheap, stable) ─────────────────────────
   // Sufficient for the test suite's stability checks; not a crypto hash.
@@ -372,7 +406,7 @@ const BUN_HELPERS: &str = r#"
     if (!bytes || typeof bytes.indexOf !== "function") return -1;
     return bytes.indexOf(10, start);
   };
-  Bun.concatArrayBuffers = function (buffers, _maxBytes, asUint8Array) {
+  Bun.concatArrayBuffers = function (buffers, maxBytes, asUint8Array) {
     let total = 0;
     const arrs = [];
     for (const b of buffers) {
@@ -381,9 +415,20 @@ const BUN_HELPERS: &str = r#"
       arrs.push(a);
       total += a.byteLength;
     }
-    const out = new Uint8Array(total);
+    const limit = (maxBytes !== undefined && maxBytes !== Infinity && typeof maxBytes === "number") ? Math.min(total, maxBytes) : total;
+    const out = new Uint8Array(limit);
     let off = 0;
-    for (const a of arrs) { out.set(a, off); off += a.byteLength; }
+    for (const a of arrs) {
+      if (off >= limit) break;
+      const room = limit - off;
+      if (a.byteLength <= room) {
+        out.set(a, off);
+        off += a.byteLength;
+      } else {
+        out.set(a.subarray(0, room), off);
+        off = limit;
+      }
+    }
     return asUint8Array ? out : out.buffer;
   };
   Bun.readableStreamToArrayBuffer = async function (rs) {
@@ -445,8 +490,18 @@ const BUN_HELPERS: &str = r#"
     return decodeURIComponent(s.replace(/^file:\/\//, ""));
   };
   Bun.pathToFileURL = function (p) {
-    const enc = encodeURI(String(p)).replace(/#/g, "%23");
-    return new URL("file://" + (enc.startsWith("/") ? "" : "/") + enc);
+    let s = String(p);
+    // Resolve relative → absolute via cwd, and collapse `..` / `.`
+    // segments. Bun returns absolute URLs always.
+    if (!s.startsWith("/")) {
+      const path = require("node:path");
+      s = path.resolve(process.cwd(), s);
+    } else {
+      const path = require("node:path");
+      s = path.resolve(s);
+    }
+    const enc = encodeURI(s).replace(/#/g, "%23");
+    return new URL("file://" + enc);
   };
 
   // ── Bun.which / Bun.argv / Bun.main ─────────────────────────────────
