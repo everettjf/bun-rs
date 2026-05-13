@@ -2105,7 +2105,7 @@ fn build_jsc_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 // the internal semantics will still fail, but at least the file loads.
 fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     let v = ctx.eval(
-        r#"({
+        r##"({
             __esModule: true,
             crash_handler: { getMachOUUID: () => null, panic: () => {} },
             quickAndDirtyJavaScriptSyntaxHighlighter: (s) => String(s),
@@ -2135,6 +2135,78 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             cssParse: (s) => ({ raw: String(s) }),
             cssLineCol: (_s, _i) => [1, 1],
             nodeFsExtensions: {},
+            iniInternals: {
+                parse(text) {
+                    const s = String(text);
+                    const out = {};
+                    let section = out;
+                    function setKey(obj, keyPath, value) {
+                        const parts = keyPath.split(".");
+                        for (let i = 0; i < parts.length - 1; i++) {
+                            const k = parts[i];
+                            if (!obj[k] || typeof obj[k] !== "object") obj[k] = {};
+                            obj = obj[k];
+                        }
+                        obj[parts[parts.length - 1]] = value;
+                    }
+                    function coerce(v) {
+                        if (v === "true") return true;
+                        if (v === "false") return false;
+                        if (v === "null") return null;
+                        if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
+                        return v;
+                    }
+                    for (const line of s.split(/\r?\n/)) {
+                        const t = line.trim();
+                        if (!t || t.startsWith(";") || t.startsWith("#")) continue;
+                        // Section: [name] (allow escaped chars)
+                        let m = t.match(/^\[(.+)\]\s*$/);
+                        if (m) {
+                            const name = m[1];
+                            section = {};
+                            setKey(out, name, section);
+                            // Reserve key in case nothing follows.
+                            continue;
+                        }
+                        // Bare key (no =): treat as true
+                        const eqIdx = t.indexOf("=");
+                        if (eqIdx < 0) {
+                            section[t] = true;
+                            continue;
+                        }
+                        const k = t.slice(0, eqIdx).trim();
+                        let v = t.slice(eqIdx + 1).trim();
+                        // Strip surrounding quotes.
+                        if (/^".*"$/.test(v) || /^'.*'$/.test(v)) v = v.slice(1, -1);
+                        // Use the section if we're in one, else top-level.
+                        if (section === out) {
+                            section[k] = coerce(v);
+                        } else {
+                            section[k] = coerce(v);
+                        }
+                    }
+                    return out;
+                },
+                stringify(obj) {
+                    let out = "";
+                    const top = {};
+                    const sections = [];
+                    for (const [k, v] of Object.entries(obj || {})) {
+                        if (v && typeof v === "object" && !Array.isArray(v)) sections.push([k, v]);
+                        else top[k] = v;
+                    }
+                    for (const [k, v] of Object.entries(top)) {
+                        out += k + " = " + JSON.stringify(v) + "\n";
+                    }
+                    for (const [name, sub] of sections) {
+                        out += "[" + name + "]\n";
+                        for (const [k, v] of Object.entries(sub)) {
+                            out += k + " = " + JSON.stringify(v) + "\n";
+                        }
+                    }
+                    return out;
+                },
+            },
             escapeRegExp: (s) => {
                 let out = "";
                 for (const c of String(s)) {
@@ -2154,7 +2226,7 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 }
                 return out;
             },
-        })"#,
+        })"##,
         Some("[bun:internal-for-testing]"),
     )
     .expect("build bun:internal-for-testing stub");

@@ -83,6 +83,8 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "trace_events" | "node:trace_events" => build_trace_events_stub,
         "inspector" | "node:inspector" => build_inspector_stub,
         "wasi" | "node:wasi" => build_wasi_stub,
+        "test" | "node:test" => build_node_test_stub,
+        "diagnostics_channel" | "node:diagnostics_channel" => build_diag_channel_stub,
         "https" | "node:https" => http::build,
         _ => return None,
     };
@@ -248,8 +250,69 @@ fn build_perf_hooks_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 clearMarks: () => {},
                 clearMeasures: () => {},
             },
-            PerformanceObserver: class { constructor(){}; observe(){}; disconnect(){} },
-            constants: {},
+            PerformanceObserver: class { constructor(){}; observe(){}; disconnect(){}; takeRecords(){return [];} },
+            createHistogram(opts) {
+                opts = opts || {};
+                const lowest = BigInt(opts.lowest ?? 1);
+                const highest = BigInt(opts.highest ?? Number.MAX_SAFE_INTEGER);
+                let count = 0n;
+                let sum = 0n;
+                let min = highest;
+                let max = lowest - 1n;
+                let exceedsCount = 0n;
+                const values = [];
+                return {
+                    get count() { return count; },
+                    get min() { return count === 0n ? -1n : min; },
+                    get max() { return count === 0n ? -1n : max; },
+                    get mean() { return count === 0n ? NaN : Number(sum) / Number(count); },
+                    get exceeds() { return exceedsCount; },
+                    get stddev() {
+                        if (count === 0n) return NaN;
+                        const m = Number(sum) / Number(count);
+                        let s = 0;
+                        for (const v of values) { s += (Number(v) - m) ** 2; }
+                        return Math.sqrt(s / Number(count));
+                    },
+                    get percentiles() {
+                        const map = new Map();
+                        if (values.length === 0) return map;
+                        const sorted = [...values].sort((a, b) => Number(a - b));
+                        for (let p = 0; p <= 100; p++) {
+                            const idx = Math.min(sorted.length - 1, Math.floor(p / 100 * sorted.length));
+                            map.set(p, sorted[idx]);
+                        }
+                        return map;
+                    },
+                    record(v) {
+                        v = BigInt(v);
+                        if (v < lowest || v > highest) { exceedsCount += 1n; return; }
+                        values.push(v);
+                        count += 1n;
+                        sum += v;
+                        if (v < min) min = v;
+                        if (v > max) max = v;
+                    },
+                    recordDelta(_v) {},
+                    reset() { count = 0n; sum = 0n; min = highest; max = lowest - 1n; values.length = 0; exceedsCount = 0n; },
+                    percentile(p) {
+                        if (values.length === 0) return 0n;
+                        const sorted = [...values].sort((a, b) => Number(a - b));
+                        const idx = Math.min(sorted.length - 1, Math.floor(p / 100 * sorted.length));
+                        return sorted[idx];
+                    },
+                };
+            },
+            monitorEventLoopDelay(opts) {
+                return Object.assign({ enable() {}, disable() {} }, this.createHistogram(opts || {}));
+            },
+            performance_resourceTiming: class { constructor(){} },
+            constants: {
+                NODE_PERFORMANCE_GC_MAJOR: 4,
+                NODE_PERFORMANCE_GC_MINOR: 1,
+                NODE_PERFORMANCE_GC_INCREMENTAL: 8,
+                NODE_PERFORMANCE_GC_WEAKCB: 16,
+            },
         })"#,
         Some("[node:perf_hooks]"),
     )
@@ -447,6 +510,57 @@ fn build_inspector_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             Session: class { constructor(){}; connect(){}; disconnect(){}; on(){}; off(){}; post(){} },
         })"#,
         Some("[node:inspector]"),
+    )
+    .unwrap()
+}
+
+fn build_node_test_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            test: globalThis.test || ((_n, fn) => fn && fn()),
+            describe: globalThis.describe || ((_n, fn) => fn && fn()),
+            it: globalThis.it || globalThis.test,
+            before: globalThis.beforeAll,
+            after: globalThis.afterAll,
+            beforeEach: globalThis.beforeEach,
+            afterEach: globalThis.afterEach,
+            mock: globalThis.mock,
+            run: () => {},
+            default: globalThis.test || ((_n, fn) => fn && fn()),
+        })"#,
+        Some("[node:test]"),
+    )
+    .unwrap()
+}
+
+fn build_diag_channel_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            channel: (_name) => ({
+                hasSubscribers: false,
+                publish(_data) {},
+                subscribe(_fn) {},
+                unsubscribe(_fn) {},
+                bindStore(_store, _trans) {},
+                unbindStore() {},
+                runStores(_data, _fn) { return _fn(); },
+            }),
+            tracingChannel: (_name) => ({
+                start: { publish: () => {} },
+                end: { publish: () => {} },
+                asyncStart: { publish: () => {} },
+                asyncEnd: { publish: () => {} },
+                error: { publish: () => {} },
+                subscribe() {}, unsubscribe() {},
+                traceSync(fn, _ctx, ...args) { return fn(...args); },
+                tracePromise(fn) { return fn(); },
+                traceCallback(fn) { return fn; },
+            }),
+            subscribe() {}, unsubscribe() {}, hasSubscribers: () => false,
+        })"#,
+        Some("[node:diagnostics_channel]"),
     )
     .unwrap()
 }
