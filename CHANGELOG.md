@@ -3,6 +3,39 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [1.0.2] – 2026-05-13
+
+Compatibility passes triggered by trying to run Bun's official test suite
+(`bun/test/**`) against `bun-rs`.
+
+### Fixed
+- **Rust-backed callbacks now inherit from `Function.prototype`** so
+  `fn.apply(this, args)`, `fn.call(...)`, and `fn.bind(...)` work. They
+  were callable before (the JSClass had `callAsFunction`) but didn't
+  carry Function methods — broke any code doing
+  `path.join.apply(null, args)` or similar dispatch tricks. Fixed by
+  installing a one-time `globalThis.__bun_funproto_mix` setter that
+  swaps each new callback's prototype.
+
+### Added
+- `bun:test` module — re-exports the test-runner globals so files can
+  `import { describe, test, expect } from "bun:test"`.
+- `harness` module — compatibility shim for Bun's test suite. Exposes
+  `bunExe`, `bunEnv`, `isWindows` / `isMacOS` / `isLinux`, `tempDir`,
+  `tmpdirSync`, `tempDirWithFiles`, `gc`, `randomPort` etc. Routed by
+  exact bare name so it doesn't shadow user packages.
+- `test.todo` / `test.only` / `test.each` (and `.skip` was already
+  there).
+
+### Honest scope (against bun/test/**)
+On a 24-file sample across path/buffer/crypto/url/fs/web-globals/
+sqlite/ffi: **~37% of individual tests pass** after these fixes.
+Major remaining blockers are missing APIs (e.g. `crypto.createCipheriv`,
+file descriptor I/O, Bun-specific helpers), the `using` declaration
+syntax (Stage 3 explicit resource management — JSC's parser doesn't
+accept it, oxc doesn't lower it), and platform-specific assertions
+written against the actual Bun runtime.
+
 ## [1.0.1] – 2026-05-13
 
 ### Fixed

@@ -94,6 +94,31 @@ impl Callback {
             }
         }
 
+        // Splice Function.prototype into the object's prototype chain so
+        // user code can do `cb.apply(this, args)` / `.call(...)` / `.bind(…)`
+        // — the JSClass-backed callable is invokable but, by default, doesn't
+        // inherit from Function.prototype. We cache the setter on globalThis.
+        unsafe {
+            install_function_protomixin(ctx);
+            let global = sys::JSContextGetGlobalObject(ctx.as_raw());
+            let key = JsString::new("__bun_funproto_mix");
+            let mut exc: sys::JSValueRef = ptr::null();
+            let mixer = sys::JSObjectGetProperty(ctx.as_raw(), global, key.as_raw(), &mut exc);
+            if !mixer.is_null() && sys::JSValueIsObject(ctx.as_raw(), mixer) {
+                let mixer_obj = mixer as sys::JSObjectRef;
+                let args = [raw as sys::JSValueRef];
+                let mut exc2: sys::JSValueRef = ptr::null();
+                let _ = sys::JSObjectCallAsFunction(
+                    ctx.as_raw(),
+                    mixer_obj,
+                    ptr::null_mut(),
+                    1,
+                    args.as_ptr(),
+                    &mut exc2,
+                );
+            }
+        }
+
         Self { raw }
     }
 
@@ -110,6 +135,30 @@ impl Callback {
     pub fn object_in<'ctx>(&self, ctx: &'ctx Context) -> Object<'ctx> {
         unsafe { Object::from_raw(ctx, self.raw) }
     }
+}
+
+// Installs `globalThis.__bun_funproto_mix(obj)` once per context. The mixer
+// makes a Rust-backed callable look like a real Function so `.apply` / `.call`
+// / `.bind` work.
+fn install_function_protomixin(ctx: &Context) {
+    // Cheap dedup: try-get the property; if defined, skip.
+    let global = ctx.global_object();
+    if global
+        .get_property("__bun_funproto_mix")
+        .map(|v| !v.is_undefined())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let _ = ctx.eval(
+        r#"
+        globalThis.__bun_funproto_mix = function(obj) {
+            try { Object.setPrototypeOf(obj, Function.prototype); } catch (e) {}
+            return obj;
+        };
+        "#,
+        Some("[bun-funproto-mix]"),
+    );
 }
 
 // ── The shared "RustCallback" JSClass ────────────────────────────────────────

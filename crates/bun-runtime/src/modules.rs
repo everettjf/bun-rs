@@ -125,6 +125,12 @@ fn load_module<'ctx>(
         // Allow bare `import "path"` etc. as a convenience.
         return Ok(v);
     }
+    // `harness` is a compatibility shim used by Bun's official test suite.
+    // Routed by exact name so it doesn't shadow a user package called
+    // "harness".
+    if spec == "harness" {
+        return Ok(crate::bun_api::test_harness_load(ctx));
+    }
 
     // Absolute paths bypass resolution.
     let abs: PathBuf = if Path::new(spec).is_absolute() {

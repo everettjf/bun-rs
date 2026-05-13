@@ -227,6 +227,17 @@ const GLOBALS: &str = r#"
   g.it = g.test;
   g.test.skip = (name) => pushTest(name, () => {}, { skip: true });
   g.it.skip = g.test.skip;
+  g.test.todo = (name) => pushTest(name, () => {}, { skip: true });
+  g.it.todo = g.test.todo;
+  g.test.only = (name, fn) => pushTest(name, fn);
+  g.it.only = g.test.only;
+  g.test.each = (rows) => (name, fn) => {
+    for (const row of rows) {
+      const args = Array.isArray(row) ? row : [row];
+      pushTest(name + " [" + JSON.stringify(args) + "]", () => fn(...args));
+    }
+  };
+  g.it.each = g.test.each;
 
   g.beforeAll = (fn) => curr().beforeAll.push(fn);
   g.afterAll = (fn) => curr().afterAll.push(fn);

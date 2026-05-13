@@ -13,6 +13,8 @@ mod ffi;
 mod file;
 pub mod serve;
 mod sqlite;
+mod test_harness;
+mod test_module;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -24,15 +26,21 @@ thread_local! {
 
 /// Load `bun:<name>` (e.g. `bun:sqlite`). Returns None if the name isn't a
 /// recognized bun builtin — caller should treat as resolve error.
+pub fn test_harness_load<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    test_harness::build(ctx)
+}
+
 pub fn load_bun_builtin<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
     let builder: fn(&Context) -> Value<'_> = match name {
         "sqlite" | "bun:sqlite" => sqlite::build,
         "ffi" | "bun:ffi" => ffi::build,
+        "test" | "bun:test" => test_module::build,
         _ => return None,
     };
     let key: &'static str = match name {
         "sqlite" | "bun:sqlite" => "sqlite",
         "ffi" | "bun:ffi" => "ffi",
+        "test" | "bun:test" => "test",
         _ => return None,
     };
     let cached = BUN_BUILTINS.with(|m| m.borrow().get(key).copied());
