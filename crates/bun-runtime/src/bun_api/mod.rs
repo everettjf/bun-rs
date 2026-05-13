@@ -290,9 +290,15 @@ const BUN_HELPERS: &str = r#"
       lines.push(borderbot);
       return lines.join("\n") + "\n";
     }
-    // Plain object: tabulate properties.
+    // Function or plain object: tabulate properties (or a single-row
+    // representation for functions with no own keys).
     const keys = Object.keys(rows);
-    if (keys.length === 0) return "";
+    if (keys.length === 0) {
+      if (t === "function") {
+        return Bun.inspect.table([{ name: rows.name || "anonymous", length: rows.length }]);
+      }
+      return "";
+    }
     return Bun.inspect.table(keys.map(k => ({ key: k, value: rows[k] })));
   };
 
@@ -672,17 +678,54 @@ const BUN_HELPERS: &str = r#"
     serialize() { return this.toString(); }
     isExpired() { return this.expires && new Date(this.expires) < new Date(); }
     static parse(header) {
-      const map = new CookieMap();
-      String(header || "").split(/;\s*/).forEach(part => {
-        const i = part.indexOf("=");
-        if (i < 0) return;
-        const k = decodeURIComponent(part.slice(0, i).trim());
-        const v = decodeURIComponent(part.slice(i + 1).trim());
-        if (k) map.set(k, v);
-      });
-      return map;
+      // Single "name=value; attr=...; attr2; ..." Set-Cookie-style string.
+      // Returns a Cookie instance whose .name/.value are the FIRST pair,
+      // and attributes (Path, Domain, Max-Age, Expires, Secure, HttpOnly,
+      // SameSite, Partitioned) come from subsequent segments.
+      const parts = String(header || "").split(/;\s*/);
+      if (parts.length === 0 || parts[0].length === 0) {
+        throw new TypeError("Cookie.parse: invalid input");
+      }
+      let name, value;
+      const first = parts.shift();
+      const eq = first.indexOf("=");
+      if (eq < 0) {
+        // No `=`: treat as a bare name with empty value (matches Bun ergo).
+        name = first.trim();
+        value = "";
+      } else {
+        name = first.slice(0, eq).trim();
+        value = first.slice(eq + 1).trim();
+        // Strip surrounding double-quotes per RFC6265.
+        if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+          value = value.slice(1, -1);
+        }
+      }
+      if (!name) throw new TypeError("Cookie.parse: empty name");
+      const opts = {};
+      for (const p of parts) {
+        const ek = p.indexOf("=");
+        const ak = (ek < 0 ? p : p.slice(0, ek)).trim().toLowerCase();
+        const av = ek < 0 ? "" : p.slice(ek + 1).trim();
+        switch (ak) {
+          case "path": opts.path = av || "/"; break;
+          case "domain": opts.domain = av; break;
+          case "expires": opts.expires = new Date(av); break;
+          case "max-age": opts.maxAge = parseInt(av, 10); break;
+          case "secure": opts.secure = true; break;
+          case "httponly": opts.httpOnly = true; break;
+          case "samesite": opts.sameSite = av ? av.toLowerCase() : "lax"; break;
+          case "partitioned": opts.partitioned = true; break;
+          default: break;
+        }
+      }
+      return new Cookie(name, value, opts);
     }
-    static from(header) { return Cookie.parse(header); }
+    static from(name, value, opts) {
+      // Cookie.from(name, value, opts) constructor-style.
+      if (arguments.length === 1 && typeof name === "string") return Cookie.parse(name);
+      return new Cookie(name, value, opts);
+    }
   }
   class CookieMap {
     constructor(init) {
