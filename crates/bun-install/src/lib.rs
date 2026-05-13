@@ -224,6 +224,171 @@ fn pick_version(manifest: &Json, range: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── collect_top_deps ───────────────────────────────────────────
+
+    #[test]
+    fn collects_only_deps_in_production() {
+        let pkg = json!({
+            "dependencies": { "a": "1.0.0", "b": "^2" },
+            "devDependencies": { "c": "0.0.1" }
+        });
+        let mut out = collect_top_deps(&pkg, true);
+        out.sort();
+        assert_eq!(
+            out,
+            vec![
+                ("a".to_string(), "1.0.0".to_string()),
+                ("b".to_string(), "^2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn collects_dev_when_not_production() {
+        let pkg = json!({
+            "dependencies": { "a": "1.0.0" },
+            "devDependencies": { "c": "0.0.1" }
+        });
+        let mut out = collect_top_deps(&pkg, false);
+        out.sort();
+        assert_eq!(
+            out,
+            vec![
+                ("a".to_string(), "1.0.0".to_string()),
+                ("c".to_string(), "0.0.1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_pkg_returns_empty() {
+        let pkg = json!({});
+        assert!(collect_top_deps(&pkg, false).is_empty());
+        assert!(collect_top_deps(&pkg, true).is_empty());
+    }
+
+    #[test]
+    fn collect_handles_non_string_version_value() {
+        // If a version is somehow a non-string, we fall back to "latest"
+        // so the installer at least tries something.
+        let pkg = json!({
+            "dependencies": { "weird": 42 }
+        });
+        let out = collect_top_deps(&pkg, true);
+        assert_eq!(out, vec![("weird".to_string(), "latest".to_string())]);
+    }
+
+    // ── pick_version ───────────────────────────────────────────────
+
+    fn manifest_with(versions: &[&str], latest: &str) -> Json {
+        let mut vmap = serde_json::Map::new();
+        for v in versions {
+            vmap.insert(v.to_string(), json!({"dist": {"tarball": "https://x/y.tgz"}}));
+        }
+        json!({
+            "versions": Json::Object(vmap),
+            "dist-tags": { "latest": latest, "next": "2.0.0-rc.1" }
+        })
+    }
+
+    #[test]
+    fn pick_exact_pinned_version() {
+        let m = manifest_with(&["1.0.0", "1.1.0", "2.0.0"], "2.0.0");
+        assert_eq!(pick_version(&m, "1.1.0"), Some("1.1.0".to_string()));
+    }
+
+    #[test]
+    fn pick_uses_dist_tag_when_range_matches_tag() {
+        let m = manifest_with(&["1.0.0", "2.0.0-rc.1"], "1.0.0");
+        assert_eq!(pick_version(&m, "next"), Some("2.0.0-rc.1".to_string()));
+        assert_eq!(pick_version(&m, "latest"), Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn pick_strips_caret_and_tilde() {
+        let m = manifest_with(&["1.2.3", "2.0.0"], "2.0.0");
+        assert_eq!(pick_version(&m, "^1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(pick_version(&m, "~1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(pick_version(&m, ">=1.2.3"), Some("1.2.3".to_string()));
+        assert_eq!(pick_version(&m, "v1.2.3"), Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn pick_falls_back_to_latest() {
+        let m = manifest_with(&["1.0.0", "2.0.0"], "2.0.0");
+        // Range doesn't match any version, isn't a tag, even after trimming.
+        assert_eq!(pick_version(&m, "^9.9.9"), Some("2.0.0".to_string()));
+    }
+
+    #[test]
+    fn pick_returns_none_when_no_versions() {
+        let m = json!({ "dist-tags": { "latest": "1.0.0" } });
+        assert_eq!(pick_version(&m, "1.0.0"), None);
+    }
+
+    // ── extract_tarball ───────────────────────────────────────────
+
+    #[test]
+    fn extracts_and_strips_package_prefix() {
+        // Build a small gzipped tar in memory: package/index.js + package/sub/a.txt
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let mut tar_bytes: Vec<u8> = Vec::new();
+        {
+            let gz = GzEncoder::new(&mut tar_bytes, Compression::default());
+            let mut builder = tar::Builder::new(gz);
+
+            let mut hdr = tar::Header::new_gnu();
+            let data = b"console.log('hi');";
+            hdr.set_size(data.len() as u64);
+            hdr.set_mode(0o644);
+            hdr.set_cksum();
+            builder
+                .append_data(&mut hdr, "package/index.js", &data[..])
+                .unwrap();
+
+            let mut hdr2 = tar::Header::new_gnu();
+            let data2 = b"sub-file";
+            hdr2.set_size(data2.len() as u64);
+            hdr2.set_mode(0o644);
+            hdr2.set_cksum();
+            builder
+                .append_data(&mut hdr2, "package/sub/a.txt", &data2[..])
+                .unwrap();
+
+            let gz = builder.into_inner().unwrap();
+            gz.finish().unwrap().flush().unwrap();
+        }
+
+        let tmp = std::env::temp_dir().join(format!(
+            "bun-install-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        extract_tarball(&tar_bytes, &tmp).unwrap();
+
+        let index = tmp.join("index.js");
+        assert!(index.exists(), "index.js should land at dest root");
+        assert_eq!(std::fs::read_to_string(&index).unwrap(), "console.log('hi');");
+        let sub = tmp.join("sub").join("a.txt");
+        assert!(sub.exists(), "sub/a.txt should land under dest");
+        assert_eq!(std::fs::read_to_string(&sub).unwrap(), "sub-file");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
 fn extract_tarball(bytes: &[u8], dest: &Path) -> Result<(), InstallError> {
     // npm tarballs are gzipped tar. Entries are prefixed `package/`; strip
     // that so files land at dest/<rest>.

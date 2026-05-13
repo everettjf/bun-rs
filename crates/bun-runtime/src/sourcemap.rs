@@ -146,4 +146,46 @@ mod tests {
         let out = remap_frame("f@/tmp/test2.ts:5:0").unwrap();
         assert!(out.contains("<bunrs-internal>"));
     }
+
+    #[test]
+    fn remap_frame_inside_wrapper_prefix_returns_none() {
+        // Lines 1..=WRAPPER_PREFIX_LINES (1..=4) live in the wrapper itself
+        // and shouldn't be reported to the user — return None so the caller
+        // emits the frame as-is (or drops it upstream).
+        let path = PathBuf::from("/tmp/wrap-test.ts");
+        register(path.clone(), vec![1, 2, 3], "a\nb\nc\n");
+        assert!(remap_frame("f@/tmp/wrap-test.ts:1:0").is_none());
+        assert!(remap_frame("f@/tmp/wrap-test.ts:4:0").is_none());
+    }
+
+    #[test]
+    fn remap_frame_without_at_marker() {
+        // `path:LINE:COL` shape (no `func@` prefix).
+        let path = PathBuf::from("/tmp/noat.ts");
+        register(path.clone(), vec![10, 11, 12], "x\ny\nz\n");
+        let out = remap_frame("/tmp/noat.ts:6:0").unwrap();
+        assert_eq!(out, "/tmp/noat.ts:11");
+    }
+
+    #[test]
+    fn remap_frame_unparseable_line_number_passes_through() {
+        // Caller wants to keep these untouched.
+        assert!(remap_frame("f@/tmp/x.ts:notanumber:0").is_none());
+        assert!(remap_frame("garbage with no colons").is_none());
+    }
+
+    #[test]
+    fn remap_stack_handles_mixed_frames() {
+        let path = PathBuf::from("/tmp/mixed.ts");
+        register(path.clone(), vec![1, 2, 3, 4, 5], "a\nb\nc\nd\ne\n");
+        let input = "f@/tmp/mixed.ts:6:0\nunrelated@/other/file.ts:99:0\ng@/tmp/mixed.ts:7:0";
+        let out = remap_stack(input);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        // Registered file → remapped, column dropped.
+        assert!(lines[0].ends_with(":2"), "got: {}", lines[0]);
+        // Unregistered file → verbatim.
+        assert_eq!(lines[1], "unrelated@/other/file.ts:99:0");
+        assert!(lines[2].ends_with(":3"), "got: {}", lines[2]);
+    }
 }

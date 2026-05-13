@@ -96,3 +96,91 @@ fn encode_percent(s: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── decode_percent ────────────────────────────────────────────
+
+    #[test]
+    fn decode_passthrough() {
+        assert_eq!(decode_percent("hello"), "hello");
+        assert_eq!(decode_percent(""), "");
+    }
+
+    #[test]
+    fn decode_simple_percent() {
+        assert_eq!(decode_percent("hello%20world"), "hello world");
+        assert_eq!(decode_percent("%2F"), "/");
+        assert_eq!(decode_percent("%2f"), "/"); // lowercase hex
+    }
+
+    #[test]
+    fn decode_utf8_multibyte() {
+        // "é" in UTF-8 is C3 A9
+        assert_eq!(decode_percent("caf%C3%A9"), "café");
+    }
+
+    #[test]
+    fn decode_malformed_kept_verbatim() {
+        // Trailing % with no two hex digits → kept as-is.
+        assert_eq!(decode_percent("100%"), "100%");
+        // % followed by non-hex digits → kept as-is.
+        assert_eq!(decode_percent("%ZZ"), "%ZZ");
+        // Just one hex digit after % → kept as-is.
+        assert_eq!(decode_percent("%2"), "%2");
+    }
+
+    // ── hex ───────────────────────────────────────────────────────
+
+    #[test]
+    fn hex_digit_table() {
+        assert_eq!(hex(b'0'), Some(0));
+        assert_eq!(hex(b'9'), Some(9));
+        assert_eq!(hex(b'a'), Some(10));
+        assert_eq!(hex(b'f'), Some(15));
+        assert_eq!(hex(b'A'), Some(10));
+        assert_eq!(hex(b'F'), Some(15));
+        assert_eq!(hex(b'g'), None);
+        assert_eq!(hex(b'!'), None);
+    }
+
+    // ── encode_percent ────────────────────────────────────────────
+
+    #[test]
+    fn encode_passes_through_unreserved() {
+        // ALPHA / DIGIT / "-" / "." / "_" / "~" / "/" all stay.
+        assert_eq!(
+            encode_percent("abcXYZ0123/._-~"),
+            "abcXYZ0123/._-~"
+        );
+    }
+
+    #[test]
+    fn encode_encodes_space_and_special() {
+        assert_eq!(encode_percent("hello world"), "hello%20world");
+        assert_eq!(encode_percent("?"), "%3F");
+        assert_eq!(encode_percent("&="), "%26%3D");
+    }
+
+    #[test]
+    fn encode_utf8_multibyte() {
+        // "é" → C3 A9 → "%C3%A9"
+        assert_eq!(encode_percent("café"), "caf%C3%A9");
+        // emoji (4-byte UTF-8): 🦀 = F0 9F A6 80
+        assert_eq!(encode_percent("🦀"), "%F0%9F%A6%80");
+    }
+
+    #[test]
+    fn encode_decode_round_trip() {
+        for s in &[
+            "hello world",
+            "/path/to/thing?x=1&y=2",
+            "café 🦀 v1.0",
+            "",
+        ] {
+            assert_eq!(decode_percent(&encode_percent(s)), *s);
+        }
+    }
+}

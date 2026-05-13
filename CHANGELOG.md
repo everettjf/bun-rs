@@ -3,6 +3,41 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [1.0.3] – 2026-05-12
+
+Unit-test coverage push — went from ~37 lib tests to 96. Pure
+helpers across every workspace crate that didn't have them.
+
+### Added (tests only — no behavior changes)
+- **`bun-bundler`** (0 → 16 tests): the three pure rewriter helpers
+  (`parse_string_arg`, `find_matching_paren`,
+  `rewrite_require_calls`) — double/single quotes, leading
+  whitespace, escape behavior, nested parens, paren-in-string,
+  internal-vs-external resolution, multi-call lines, passthrough.
+- **`bun-install`** (0 → 10 tests): `collect_top_deps` (production
+  vs dev, empty, non-string version fallback), `pick_version`
+  (exact, dist-tag, caret/tilde/v-prefix stripping, latest fallback,
+  no-versions), `extract_tarball` (in-memory gzipped tar with
+  `package/` prefix stripping into a temp dir).
+- **`bun-jsc`** (6 → 17 tests): `JsString` round-trip (ASCII, UTF-8,
+  empty, 8KB), `Value` kind classification across all 7 types,
+  nullish helpers, coercions (string↔number, truthiness),
+  `to_json`, **callback `.apply` / `.call` / `.bind`** (the 1.0.2
+  Function.prototype mixin), callback throws propagating as JS
+  errors, panic-in-callback being caught at FFI boundary, non-Error
+  throws (`throw 42`, `throw "..."`).
+- **`bun-transpile`** (4 → 13 tests): `.mjs` / `.cjs` passthrough,
+  TS `interface` + `type` aliasing erased, `enum` → runtime object,
+  class with `public`/`private` ctor params, optional chaining +
+  nullish kept, TSX fragments (`<>...</>`), `.jsx` lowering without
+  TS, empty file.
+- **`bun-runtime`** (9 → 22 tests): sourcemap `remap_frame` inside
+  wrapper prefix, frames without `@`, unparseable line numbers,
+  mixed-frame `remap_stack` (registered + unregistered), and
+  `node:url` percent helpers (`decode_percent` UTF-8 multibyte +
+  malformed, `hex` digit table, `encode_percent` unreserved
+  passthrough + space + emoji, round-trip).
+
 ## [1.0.2] – 2026-05-13
 
 Compatibility passes triggered by trying to run Bun's official test suite

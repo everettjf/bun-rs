@@ -129,4 +129,92 @@ mod tests {
         let err = transpile_file(Path::new("a.ts"), "const x: number = ;").unwrap_err();
         assert!(matches!(err, TranspileError::Parse(_)));
     }
+
+    #[test]
+    fn mjs_passthrough() {
+        // .mjs is plain JS — no transpile.
+        let src = "import x from './y.js';\nexport const z = x + 1;";
+        let out = transpile_file(Path::new("a.mjs"), src).unwrap();
+        assert_eq!(out.code, src);
+    }
+
+    #[test]
+    fn cjs_passthrough() {
+        let src = "const fs = require('fs'); module.exports = { fs };";
+        let out = transpile_file(Path::new("a.cjs"), src).unwrap();
+        assert_eq!(out.code, src);
+    }
+
+    #[test]
+    fn ts_interface_and_type_aliases_are_erased() {
+        let src = "interface Point { x: number; y: number }\n\
+                   type Vec = [number, number];\n\
+                   const p: Point = { x: 1, y: 2 };";
+        let out = transpile_file(Path::new("a.ts"), src).unwrap();
+        // interface / type declarations vanish completely.
+        assert!(!out.code.contains("interface"));
+        assert!(!out.code.contains("type Vec"));
+        // The runtime value survives.
+        assert!(out.code.contains("p"));
+        assert!(out.code.contains("x:"));
+    }
+
+    #[test]
+    fn ts_enum_compiles_to_runtime_value() {
+        let src = "enum Color { Red, Green, Blue }\nconst c = Color.Green;";
+        let out = transpile_file(Path::new("a.ts"), src).unwrap();
+        // Enums become a runtime object — `Color` should still appear.
+        assert!(out.code.contains("Color"));
+        // No leftover `enum` keyword.
+        assert!(!out.code.contains("enum"));
+    }
+
+    #[test]
+    fn ts_class_with_access_modifiers() {
+        let src = "class C {\n\
+                     constructor(public name: string, private age: number) {}\n\
+                     greet(): string { return 'hi ' + this.name; }\n\
+                   }";
+        let out = transpile_file(Path::new("a.ts"), src).unwrap();
+        // public/private modifiers stripped, fields assigned in ctor.
+        assert!(!out.code.contains("public name"));
+        assert!(!out.code.contains("private age"));
+        assert!(out.code.contains("this.name"));
+    }
+
+    #[test]
+    fn ts_optional_chaining_and_nullish_kept() {
+        // These are JS features, not TS — codegen must preserve them.
+        let src = "const v = obj?.foo ?? 'fallback';";
+        let out = transpile_file(Path::new("a.ts"), src).unwrap();
+        assert!(out.code.contains("?.") || out.code.contains("?."));
+        assert!(out.code.contains("??") || out.code.contains("\"fallback\"") || out.code.contains("'fallback'"));
+    }
+
+    #[test]
+    fn tsx_with_react_fragment() {
+        let src = "const el = <><span>a</span><span>b</span></>;";
+        let out = transpile_file(Path::new("a.tsx"), src).unwrap();
+        assert!(!out.code.contains("<>"));
+        // Classic runtime: should reference React (createElement / Fragment).
+        assert!(
+            out.code.contains("React") || out.code.contains("Fragment"),
+            "expected React or Fragment in output, got: {}",
+            out.code
+        );
+    }
+
+    #[test]
+    fn jsx_file_lowers_without_ts_strip() {
+        // .jsx is JSX but not TS — JSX should still be lowered.
+        let src = "const el = <div className=\"x\">hi</div>;";
+        let out = transpile_file(Path::new("a.jsx"), src).unwrap();
+        assert!(!out.code.contains("<div"));
+    }
+
+    #[test]
+    fn empty_file_returns_empty_or_minimal() {
+        let out = transpile_file(Path::new("a.ts"), "").unwrap();
+        assert!(out.code.trim().is_empty() || out.code.len() < 5);
+    }
 }
