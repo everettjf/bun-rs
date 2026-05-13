@@ -639,6 +639,14 @@ const BUN_HELPERS: &str = r#"
     } else {
       throw new TypeError("Bun.spawn: missing cmd");
     }
+    // Validate signal — must be AbortSignal-like or omitted.
+    if (options.signal !== undefined && options.signal !== null) {
+      const s = options.signal;
+      const ok = s && typeof s === "object" && typeof s.addEventListener === "function" && "aborted" in s;
+      if (!ok) {
+        throw new TypeError("Bun.spawn: signal option must be an AbortSignal");
+      }
+    }
     const cp = require("node:child_process");
     const proc = cp.spawn(cmd, args, {
       cwd: options.cwd,
@@ -997,7 +1005,7 @@ const BUN_HELPERS: &str = r#"
         out.address = host;
         out.family = "IPv4";
         out.port = port;
-        return out;
+        // Returns undefined; mutates `out` in-place.
       },
     };
     return attachDispose(sock, () => sock.stop(true), async () => sock.stop(true));
