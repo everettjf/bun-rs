@@ -2267,7 +2267,9 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             highlightJavaScript: (s) => String(s),
             fs: {},
             jsc: {},
-            shellInternals: {},
+            shellInternals: {
+                builtinDisabled: (_name) => false,
+            },
             CookieMap: undefined,
             Cookie: undefined,
             // Bun's internal probes — all return false / no-op.
@@ -2286,6 +2288,14 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 },
                 toUTF16Alloc(buf) { return buf.toString("utf8"); },
             },
+            // patchInternals.{parse,apply,makeDiff} — Bun's internal git-
+            // patch utilities. We stub them so the test file at least
+            // loads; individual tests will fail with our stub semantics.
+            patchInternals: {
+                parse: (_s) => ({}),
+                apply: (_t, _p) => "",
+                makeDiff: (_a, _b) => "",
+            },
             escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
             escapeHTML: globalThis.Bun ? globalThis.Bun.escapeHTML : (s) => s,
             fnGetMimeType: (_p) => "application/octet-stream",
@@ -2298,6 +2308,19 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             },
             cssParse: (s) => ({ raw: String(s) }),
             cssLineCol: (_s, _i) => [1, 1],
+            cssInternals: {
+                minifyTestWithOptions: (s, _o) => String(s),
+                testWithOptions: (s, _o) => String(s),
+                _test: (s) => String(s),
+                prefixTestWithOptions: (s, _o) => String(s),
+                prefixTest: (s) => String(s),
+                minifyTest: (s) => String(s),
+                attrTest: (s) => String(s),
+                cssTest: (s) => String(s),
+                cssError: (_s) => null,
+                minifyErrorTestWithOptions: (_s, _e, _o) => {},
+                bundle: (_o) => ({ outputs: [] }),
+            },
             nodeFsExtensions: {},
             iniInternals: {
                 parse(text) {
