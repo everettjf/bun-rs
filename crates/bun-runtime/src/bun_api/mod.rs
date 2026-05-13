@@ -1289,12 +1289,16 @@ const BUN_HELPERS: &str = r##"
     }
     return {
       generate(secret, opts) {
+        if (arguments.length >= 1 && (secret === "" || secret === null)) {
+          throw new TypeError("CSRF.generate: secret must be a non-empty string");
+        }
         secret = secret || DEFAULT_SECRET;
         opts = opts || {};
         const expiresMs = (opts.expiresIn != null ? opts.expiresIn : 24 * 60 * 60 * 1000);
-        const exp = expiresMs > 0 ? Date.now() + expiresMs : 0;
+        const iat = Date.now();
+        const exp = expiresMs > 0 ? iat + expiresMs : 0;
         const nonce = Math.random().toString(36).slice(2, 12);
-        const payload = `${exp}.${nonce}`;
+        const payload = `${iat}.${exp}.${nonce}`;
         const sig = hmacHex(secret, payload);
         const token = `${payload}.${sig}`;
         const encoding = (opts.encoding || "base64url").toLowerCase();
@@ -1303,13 +1307,22 @@ const BUN_HELPERS: &str = r##"
         return encodeB64Url(token);
       },
       verify(token, secretOrOpts, optsArg) {
-        if (typeof token !== "string" || token.length === 0) return false;
+        if (token === "" || token == null) {
+          throw new TypeError("CSRF.verify: token must be a non-empty string");
+        }
+        if (typeof token !== "string") return false;
         // Accept either (token, secret, opts) or (token, { secret, ...opts }).
         let secret, opts;
         if (secretOrOpts && typeof secretOrOpts === "object") {
           opts = secretOrOpts;
+          if (opts.secret === "") {
+            throw new TypeError("CSRF.verify: secret must be a non-empty string");
+          }
           secret = opts.secret || DEFAULT_SECRET;
         } else {
+          if (secretOrOpts === "") {
+            throw new TypeError("CSRF.verify: secret must be a non-empty string");
+          }
           secret = secretOrOpts || DEFAULT_SECRET;
           opts = optsArg || {};
         }
@@ -1327,13 +1340,15 @@ const BUN_HELPERS: &str = r##"
         const sig = raw.slice(idx + 1);
         const expected = hmacHex(secret, payload);
         if (sig !== expected) return false;
-        const expIdx = payload.indexOf(".");
-        if (expIdx < 0) return false;
-        const exp = +payload.slice(0, expIdx);
-        if (exp > 0 && Date.now() > exp) return false;
-        if (opts.maxAge != null && opts.maxAge >= 0) {
-          // Reject if older than maxAge from issue time.
-          // We don't store issue time separately; treat exp - default expiresIn as issue.
+        // Payload now: "iat.exp.nonce"
+        const parts = payload.split(".");
+        if (parts.length < 3) return false;
+        const iat = +parts[0];
+        const exp = +parts[1];
+        const now = Date.now();
+        if (exp > 0 && now > exp) return false;
+        if (opts.maxAge != null && opts.maxAge >= 0 && iat > 0) {
+          if (now - iat > opts.maxAge) return false;
         }
         return true;
       },
