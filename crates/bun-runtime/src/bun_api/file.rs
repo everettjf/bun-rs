@@ -87,6 +87,13 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             Ok(Value::new_bool(args.context(), exists))
         });
 
+        // .toString() returns the file path — used by Bun.$ shell template
+        // and other String(file) coercions.
+        let p_str = path.clone();
+        bind(ctx, &obj, "toString", move |args| {
+            Ok(Value::new_string(args.context(), &p_str))
+        });
+
         // .slice(start, end?, type?) — returns a new Bun.file-like object
         // whose body methods read the underlying file then slice the bytes.
         let p_slice = path.clone();

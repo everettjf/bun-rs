@@ -2238,8 +2238,11 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             escapeHTML: globalThis.Bun ? globalThis.Bun.escapeHTML : (s) => s,
             fnGetMimeType: (_p) => "application/octet-stream",
             sysErrorNameFromLibuv: (code) => {
-                const map = { "-4058": "ENOENT", "-2": "ENOENT", "-4068": "EACCES" };
-                return map[String(code)] || ("UNKNOWN_" + code);
+                // Bun's `bun.sys.Error.name()` only consults libuv codes on
+                // Windows; on POSIX it returns undefined.
+                if (process.platform !== "win32") return undefined;
+                const map = { "4058": "ENOENT", "4083": "EBADF", "4092": "EACCES", "4094": "EUNKNOWN" };
+                return map[String(code)];
             },
             cssParse: (s) => ({ raw: String(s) }),
             cssLineCol: (_s, _i) => [1, 1],
