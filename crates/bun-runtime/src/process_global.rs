@@ -246,7 +246,18 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
             p.connected = false;
             p.debugPort = 9229;
             p.execArgv = [];
+            // execPath: Bun sets this to the absolute bun executable path.
+            // argv[0] is already the bun-rs path (set by CLI to current_exe());
+            // fall through to that, or as last resort use a stable string.
             p.execPath = process.argv[0] || "bun-rs";
+            // Bun's argv0 == basename(execPath) by default.
+            if (!p.argv0) {
+              try {
+                const ep = p.execPath || "";
+                const m = String(ep).split(/[\/\\]/).pop();
+                p.argv0 = m || "bun-rs";
+              } catch { p.argv0 = "bun-rs"; }
+            }
             p.features = { ipv6: true, tls: true };
             p.openStdin = () => process.stdin;
             p.report = { directory: "", filename: "", reportOnFatalError: false, reportOnSignal: false, reportOnUncaughtException: false, signal: "SIGUSR2", getReport: () => "{}", writeReport: () => "" };
@@ -319,6 +330,29 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
     global
         .set_property("process", &proc.as_value())
         .expect("set globalThis.process");
+
+    // The earlier [process-extras] eval ran before globalThis.process was
+    // bound, so its IIFE got undefined and silently no-op'd. Re-run the
+    // execPath / argv0 / arch / report bookkeeping now that `process` is
+    // reachable from JS.
+    let _ = ctx.eval(
+        r#"
+        (function(p){
+            if (!p) return;
+            if (!p.execPath || typeof p.execPath !== "string") {
+                p.execPath = (p.argv && p.argv[0]) || "bun-rs";
+            }
+            if (!p.argv0) {
+                try {
+                    const ep = p.execPath || "";
+                    const m = String(ep).split(/[\/\\]/).pop();
+                    p.argv0 = m || "bun-rs";
+                } catch { p.argv0 = "bun-rs"; }
+            }
+        })(globalThis.process);
+        "#,
+        Some("[process-execpath-fixup]"),
+    );
 }
 
 fn build_string_array<'ctx>(ctx: &'ctx Context, items: &[String]) -> Value<'ctx> {

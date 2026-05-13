@@ -28,6 +28,15 @@ pub use modules::{install_module_loader, run_entry, LoaderRuntimeError};
 pub use process_global::install_process;
 pub use timers::{install_timers, run_event_loop};
 
+/// Absolute path of the current bun-rs binary, used as argv[0] /
+/// process.execPath. Bun's test harnesses rely on `process.execPath`
+/// pointing at a real file so they can re-spawn the binary.
+pub fn bun_exe_path() -> String {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "bun-rs".to_string())
+}
+
 /// Top-level wrapper that holds the Context + has all builtins installed.
 pub struct Runtime {
     pub ctx: Context,
@@ -164,7 +173,7 @@ fn run() -> Result<(), RuntimeError> {
     if args.is_empty() {
         // No args → REPL. If stdin isn't a TTY (piped), fall back to "read all
         // stdin and eval it like -e".
-        let rt = Runtime::new(vec!["bun-rs".to_string(), "[repl]".to_string()]);
+        let rt = Runtime::new(vec![bun_exe_path(), "[repl]".to_string()]);
         return repl::run(&rt.ctx);
     }
 
@@ -190,7 +199,7 @@ fn run() -> Result<(), RuntimeError> {
             let code = args.get(1).ok_or(RuntimeError::Usage)?.clone();
             // After `-e`, the rest is script argv.
             let script_args = args.drain(2..).collect::<Vec<_>>();
-            let mut all_argv = vec!["bun-rs".to_string(), "[inline]".to_string()];
+            let mut all_argv = vec![bun_exe_path(), "[inline]".to_string()];
             all_argv.extend(script_args);
             let rt = Runtime::new(all_argv);
             let result = rt.eval_string(&code, "[inline]");
@@ -264,7 +273,7 @@ fn run() -> Result<(), RuntimeError> {
         "run" => {
             let file = args.get(1).ok_or(RuntimeError::Usage)?.clone();
             let script_args = args.drain(2..).collect::<Vec<_>>();
-            let mut all_argv = vec!["bun-rs".to_string(), file.clone()];
+            let mut all_argv = vec![bun_exe_path(), file.clone()];
             all_argv.extend(script_args);
             let rt = Runtime::new(all_argv);
             rt.eval_file(Path::new(&file))?;
@@ -277,7 +286,7 @@ fn run() -> Result<(), RuntimeError> {
             let path = PathBuf::from(&file);
             if path.exists() {
                 let script_args = args.drain(1..).collect::<Vec<_>>();
-                let mut all_argv = vec!["bun-rs".to_string(), file];
+                let mut all_argv = vec![bun_exe_path(), file];
                 all_argv.extend(script_args);
                 let rt = Runtime::new(all_argv);
                 rt.eval_file(&path)?;

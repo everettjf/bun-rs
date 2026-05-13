@@ -187,6 +187,13 @@ fn load_module<'ctx>(
     // Routed by exact name so it doesn't shadow a user package called
     // "harness".
     if spec == "harness" {
+        // Prefer the REAL harness.ts shipped in the Bun test repo so all
+        // exports (isIPv4, fillRepeating, isMacOSVersionAtLeast, …) are
+        // available. Fall back to the in-runtime stub if the path is gone.
+        let real = std::path::Path::new("/Users/eevv/focus/bun/test/harness.ts");
+        if real.exists() {
+            return load_module(ctx, real.to_str().unwrap_or(""), real);
+        }
         return Ok(crate::bun_api::test_harness_load(ctx));
     }
     // bun/test internal: _util/* — short modules in Bun's test tree

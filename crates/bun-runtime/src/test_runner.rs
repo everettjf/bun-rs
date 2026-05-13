@@ -44,7 +44,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
         return 1;
     }
 
-    let rt = crate::Runtime::new(vec!["bun-rs".to_string(), "test".to_string()]);
+    let rt = crate::Runtime::new(vec![crate::bun_exe_path(), "test".to_string()]);
     install_globals(&rt.ctx);
 
     let mut total_pass = 0usize;
