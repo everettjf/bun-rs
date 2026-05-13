@@ -851,49 +851,49 @@ const GLOBALS: &str = r#"
       __proto__: null,
       then: undefined,
     };
-    // Build a thenable .resolves / .rejects that returns a fresh expect over
-    // the awaited value.
-    Object.defineProperty(obj, "resolves", {
-      get() {
-        return new Proxy({}, {
-          get(_, k) {
-            return async (...a) => {
-              const v = await received;
-              return mkExpect(v, not)[k](...a);
-            };
-          },
-        });
-      },
-    });
-    Object.defineProperty(obj, "rejects", {
-      get() {
-        return new Proxy({}, {
-          get(_, k) {
-            return async (...a) => {
-              let e;
-              let rejected = false;
-              try { await received; } catch (err) { e = err; rejected = true; }
-              if (!rejected) {
-                throw new Error("expected promise to reject");
+    // Build a thenable .resolves / .rejects that returns a fresh expect
+    // over the awaited value. Supports chained `.not` after .resolves /
+    // .rejects via the Proxy's `not` key returning a flipped Proxy.
+    function makeResolvesProxy(flipped) {
+      return new Proxy({}, {
+        get(_, k) {
+          if (k === "not") return makeResolvesProxy(!flipped);
+          return async (...a) => {
+            const v = await received;
+            return mkExpect(v, flipped)[k](...a);
+          };
+        },
+      });
+    }
+    function makeRejectsProxy(flipped) {
+      return new Proxy({}, {
+        get(_, k) {
+          if (k === "not") return makeRejectsProxy(!flipped);
+          return async (...a) => {
+            let e;
+            let rejected = false;
+            try { await received; } catch (err) { e = err; rejected = true; }
+            if (!rejected) {
+              throw new Error("expected promise to reject");
+            }
+            if (k === "toThrow") {
+              const m = a[0];
+              const matched = m === undefined ||
+                (m instanceof RegExp ? m.test(e && e.message ? e.message : String(e)) :
+                 typeof m === "string" ? (e && e.message ? e.message : String(e)).includes(m) :
+                 typeof m === "function" ? e instanceof m : false);
+              if (flipped ? matched : !matched) {
+                throw new Error(`expect(...).${flipped?"not.":""}rejects.toThrow(${fmt(m)}) failed: got ${e && e.message ? e.message : String(e)}`);
               }
-              if (k === "toThrow") {
-                // Match Jest: compare against the rejection's message / type.
-                const m = a[0];
-                const matched = m === undefined ||
-                  (m instanceof RegExp ? m.test(e && e.message ? e.message : String(e)) :
-                   typeof m === "string" ? (e && e.message ? e.message : String(e)).includes(m) :
-                   typeof m === "function" ? e instanceof m : false);
-                if (not ? matched : !matched) {
-                  throw new Error(`expect(...).${not?"not.":""}rejects.toThrow(${fmt(m)}) failed: got ${e && e.message ? e.message : String(e)}`);
-                }
-                return;
-              }
-              return mkExpect(e, not)[k](...a);
-            };
-          },
-        });
-      },
-    });
+              return;
+            }
+            return mkExpect(e, flipped)[k](...a);
+          };
+        },
+      });
+    }
+    Object.defineProperty(obj, "resolves", { get() { return makeResolvesProxy(not); } });
+    Object.defineProperty(obj, "rejects", { get() { return makeRejectsProxy(not); } });
     // Mix in custom matchers registered via expect.extend(). Each runs the
     // user-provided fn(received, ...args) → { pass, message } and throws
     // when pass===false (or pass===true with .not).
@@ -924,14 +924,23 @@ const GLOBALS: &str = r#"
   g.expect = function (received) {
     g.__bun_assertion_state.count++;
     g.__bun_assertion_state.hasAny = true;
-    // expect() with no args: just a thin wrapper with .fail / .pass /
-    // .unreachable. Bun's tests use `expect().fail("...")` idiomatically.
+    // expect() with no args: a chain whose matchers are no-ops (Bun
+    // semantics — useful in 'await expect(promise)' patterns where the
+    // assertion is implicit) plus the original .fail / .pass /
+    // .unreachable helpers.
     if (arguments.length === 0) {
-      return {
-        fail: (m) => { throw new Error(m || "expect().fail() called"); },
-        pass: () => {},
-        unreachable: () => { throw new Error("expect().unreachable()"); },
-      };
+      const chain = mkExpect(undefined, false);
+      chain.fail = (m) => { throw new Error(m || "expect().fail() called"); };
+      chain.pass = () => {};
+      chain.unreachable = () => { throw new Error("expect().unreachable()"); };
+      Object.defineProperty(chain, "not", {
+        get() {
+          const c = mkExpect(undefined, true);
+          c.fail = chain.fail; c.pass = chain.pass; c.unreachable = chain.unreachable;
+          return c;
+        }
+      });
+      return chain;
     }
     function makeChain(notFlag) {
       const e = mkExpect(received, notFlag);
