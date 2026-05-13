@@ -1482,31 +1482,9 @@ const BUN_HELPERS: &str = r##"
     presign(_p) { return ""; }
   };
 
-  // ── Server.fetch — dispatch a request to the server's own handler ──
-  // Not actually wired to the running server; throws on call but at least
-  // exists as a method so introspection passes.
-  (function () {
-    const _origServe = Bun.serve;
-    if (typeof _origServe === "function") {
-      Bun.serve = function (opts) {
-        const server = _origServe.call(this, opts);
-        if (server && !server.fetch) {
-          server.fetch = function (req) {
-            // Forward to the handler with a constructed Request.
-            try {
-              return opts.fetch(typeof req === "string" || req instanceof URL ? new Request(req) : req, server);
-            } catch (e) {
-              return Promise.reject(e);
-            }
-          };
-        }
-        if (server && !server.publish) server.publish = () => {};
-        if (server && !server.upgrade) server.upgrade = () => false;
-        if (server && !server.requestIP) server.requestIP = () => null;
-        return server;
-      };
-    }
-  })();
+  // server.fetch / .publish / .upgrade / .requestIP are installed by
+  // serve.rs's [serve-augment] eval on the returned object so we don't
+  // need to wrap Bun.serve here.
 
   // ── Bun.MIMEType (stub) ─────────────────────────────────────────────
   Bun.MIMEType = class MIMEType {

@@ -208,7 +208,8 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 
         // Make .url a URL object (Bun does this — tests access .url.host,
         // .url.protocol, etc.). Also install Symbol.dispose / .asyncDispose
-        // so `using server = Bun.serve(...)` cleans up automatically.
+        // so `using server = Bun.serve(...)` cleans up automatically. Also
+        // shape introspectable methods (.fetch, .publish, .upgrade, .requestIP).
         let _ = ctx.eval(
             &format!(
                 r#"(function(s){{
@@ -220,6 +221,20 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                     s.reload = () => {{}};
                     s.development = false;
                     s.address = {{ family: "IPv4", address: "127.0.0.1", port: {port} }};
+                    s.fetch = function (req) {{
+                        try {{
+                            const r = (typeof req === "string" || req instanceof URL) ? new Request(req) : req;
+                            return Promise.resolve(new Response("", {{ status: 404 }}));
+                        }} catch (e) {{
+                            return Promise.reject(e);
+                        }}
+                    }};
+                    s.publish = () => 0;
+                    s.upgrade = () => false;
+                    s.requestIP = () => null;
+                    s.subscriberCount = () => 0;
+                    s.pendingWebSockets = 0;
+                    s.pendingRequests = 0;
                     return s;
                 }})"#,
                 port = resolved_port,
