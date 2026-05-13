@@ -114,20 +114,27 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             let result;
                             try {
                                 result = await t.fn();
+                                void result;
                                 if (t.failing) {
                                     throw new Error("test was marked .failing but passed");
                                 }
                             } catch (e) {
                                 if (t.failing) {
                                     // .failing: error is expected; treat as pass.
-                                    for (const h of t.afterEach) await h().catch(()=>{});
+                                    // afterEach: inner→outer (reverse order).
+                                    for (let i = t.afterEach.length - 1; i >= 0; i--) {
+                                        try { await t.afterEach[i](); } catch {}
+                                    }
                                     console.log("  ✓ " + fullName + " (failing, threw as expected)");
                                     pass++;
                                     return;
                                 }
                                 throw e;
                             }
-                            for (const h of t.afterEach) await h();
+                            // afterEach: inner-most first (jest semantics).
+                            for (let i = t.afterEach.length - 1; i >= 0; i--) {
+                                await t.afterEach[i]();
+                            }
                             console.log("  ✓ " + fullName);
                             pass++;
                         } catch (e) {

@@ -85,7 +85,33 @@ pub fn install_timers(ctx: &Context) {
     let cv = clear_timer.value_in(ctx);
     global.set_property("clearTimeout", &cv).unwrap();
     global.set_property("clearInterval", &cv).unwrap();
+    global.set_property("clearImmediate", &cv).unwrap();
     std::mem::forget(clear_timer);
+
+    // setImmediate(cb, ...args) — schedule on next tick (0ms timeout).
+    // Bun / Node convention; many tests use it. Returns an opaque id you
+    // can pass to clearImmediate.
+    let set_immediate = Callback::new(ctx, "setImmediate", move |args| {
+        if args.is_empty() {
+            return Err("setImmediate callback must be a function".to_string());
+        }
+        let cb = args.get(0);
+        let cb_obj = cb.to_object().map_err(|_| "setImmediate callback must be a function".to_string())?;
+        if !cb_obj.is_function() {
+            return Err("setImmediate callback must be a function".to_string());
+        }
+        let id = register_timer(
+            args.context(),
+            cb_obj.as_raw(),
+            std::time::Duration::from_millis(0),
+            false,
+        );
+        Ok(Value::new_number(args.context(), id as f64))
+    });
+    global
+        .set_property("setImmediate", &set_immediate.value_in(ctx))
+        .unwrap();
+    std::mem::forget(set_immediate);
 }
 
 // ── Timer registry ───────────────────────────────────────────────────────────
