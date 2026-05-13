@@ -3,6 +3,19 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [1.0.1] – 2026-05-13
+
+### Fixed
+- `req.text()` and `Response.text()` returned the comma-separated
+  `String(uint8array)` form when the body was constructed from a
+  Uint8Array. Now decoded as UTF-8. Manifested in `Bun.serve`
+  handlers reading POST bodies. Surfaced building the
+  `examples/shortener` demo.
+
+### Added
+- `examples/shortener/` — a working URL shortener (Bun.serve +
+  bun:sqlite + JSON + 302 redirect, ~80 lines).
+
 ## [1.0.0] – 2026-05-12
 
 The 1.0 release. The public surface documented in `docs/guide.md` is

@@ -129,8 +129,22 @@
   // `bodyText` is the textified body; `bodyBytes` (optional) is a
   // Uint8Array view over the raw bytes (used by fetch for binary).
   function makeBody(bodyText, bodyBytes) {
+    // Normalize: if the caller passed a Uint8Array (or Buffer) as the body,
+    // decode it to a UTF-8 string for .text(). Pass the original bytes
+    // along separately via bodyBytes so .bytes() / .arrayBuffer() stay
+    // zero-copy.
+    let textForm;
+    if (bodyText == null) {
+      textForm = "";
+    } else if (typeof bodyText === "string") {
+      textForm = bodyText;
+    } else if (bodyText instanceof Uint8Array) {
+      textForm = new TextDecoder("utf-8").decode(bodyText);
+    } else {
+      textForm = String(bodyText);
+    }
     return {
-      _body: bodyText == null ? "" : (typeof bodyText === "string" ? bodyText : String(bodyText)),
+      _body: textForm,
       _bodyBytes: bodyBytes || null,
       _bodyUsed: false,
       get bodyUsed() { return this._bodyUsed; },
