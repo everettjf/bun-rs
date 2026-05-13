@@ -251,8 +251,12 @@ fn is_test_file(p: &Path) -> bool {
         || name.ends_with(".test.tsx")
         || name.ends_with(".test.js")
         || name.ends_with(".test.jsx")
+        || name.ends_with(".test.mjs")
+        || name.ends_with(".test.cjs")
         || name.ends_with(".spec.ts")
         || name.ends_with(".spec.tsx")
+        || name.ends_with(".spec.js")
+        || name.ends_with(".spec.mjs")
         || name.ends_with(".spec.js")
 }
 
@@ -631,14 +635,12 @@ const GLOBALS: &str = r#"
         const results = (received && received.mock && received.mock.results) || [];
         check(results.filter(r => r.type === "return").length === n, n, "toHaveReturnedTimes");
       },
-      // Resolves / rejects helpers used in older test styles.
-      toResolve() {
-        // Use the existing .resolves proxy.
-        return this.resolves.toBeDefined();
-      },
-      toReject() {
-        return this.rejects.toBeDefined();
-      },
+      fail(msg) { throw new Error(msg || "expect().fail() called"); },
+      pass(_msg) { /* always passes */ },
+      toMatchFileSnapshot(_file) {},
+      // Resolves / rejects shortcuts used in older test styles.
+      toResolve() { return this.resolves.toBeDefined(); },
+      toReject() { return this.rejects.toBeDefined(); },
     };
     obj.resolves = {
       __proto__: null,
@@ -691,6 +693,15 @@ const GLOBALS: &str = r#"
   }
 
   g.expect = function (received) {
+    // expect() with no args: just a thin wrapper with .fail / .pass /
+    // .unreachable. Bun's tests use `expect().fail("...")` idiomatically.
+    if (arguments.length === 0) {
+      return {
+        fail: (m) => { throw new Error(m || "expect().fail() called"); },
+        pass: () => {},
+        unreachable: () => { throw new Error("expect().unreachable()"); },
+      };
+    }
     const e = mkExpect(received, false);
     Object.defineProperty(e, "not", { get() { return mkExpect(received, true); } });
     return e;

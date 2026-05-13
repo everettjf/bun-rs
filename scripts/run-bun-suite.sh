@@ -21,7 +21,14 @@ echo "path,status,passed,failed,note" >> "$OUT_CSV"
 LIST=$(mktemp /tmp/bun-suite.XXXXXX)
 trap "rm -f $LIST" EXIT
 if [ -d "$BUN_TESTS/$SUBSET" ]; then
-  find "$BUN_TESTS/$SUBSET" -name '*.test.*' -type f | sort > "$LIST"
+  # Only run actual JS/TS test files — skip C fixtures, snapshots, etc.
+  find "$BUN_TESTS/$SUBSET" -type f \
+    \( -name '*.test.ts' -o -name '*.test.tsx' \
+       -o -name '*.test.js' -o -name '*.test.jsx' \
+       -o -name '*.test.mjs' -o -name '*.test.cjs' \
+       -o -name '*.spec.ts' -o -name '*.spec.tsx' \
+       -o -name '*.spec.js' -o -name '*.spec.mjs' \) \
+    | sort > "$LIST"
 else
   find $BUN_TESTS/$SUBSET -maxdepth 0 -type f 2>/dev/null | sort > "$LIST"
 fi

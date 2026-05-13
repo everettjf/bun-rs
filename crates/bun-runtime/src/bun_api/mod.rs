@@ -767,8 +767,20 @@ const BUN_HELPERS: &str = r#"
   Bun.dns = {
     lookup: async (host) => ({ address: "127.0.0.1", family: 4 }),
     resolve: async () => ["127.0.0.1"],
+    resolve4: async () => ["127.0.0.1"],
+    resolve6: async () => ["::1"],
     getServers: () => ["127.0.0.1"],
     setDefaultResultOrder: () => {},
+    prefetch: (_host, _port) => {},
+    getCacheStats: () => ({
+      cacheHitsCompleted: 0,
+      cacheHitsInflight: 0,
+      cacheMisses: 0,
+      size: 0,
+      errors: 0,
+      totalCount: 0,
+    }),
+    cancel: () => {},
   };
 
   // ── Bun.S3Client (stub) ─────────────────────────────────────────────
