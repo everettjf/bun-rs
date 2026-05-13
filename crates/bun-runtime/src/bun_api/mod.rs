@@ -234,17 +234,17 @@ const BUN_HELPERS: &str = r#"
     const _store = new Map();
     function validateArgs(opts, methodName) {
       if (!opts || typeof opts !== "object" || Array.isArray(opts)) {
-        const err = new TypeError("Bun.secrets." + methodName + ": options must be an object");
+        const err = new TypeError("Expected options to be an object");
         err.code = "ERR_INVALID_ARG_TYPE";
         throw err;
       }
-      if (typeof opts.service !== "string") {
-        const err = new TypeError("Bun.secrets." + methodName + ": service must be a string");
+      if (typeof opts.service !== "string" || typeof opts.name !== "string") {
+        const err = new TypeError("Expected service and name to be strings");
         err.code = "ERR_INVALID_ARG_TYPE";
         throw err;
       }
-      if (typeof opts.name !== "string") {
-        const err = new TypeError("Bun.secrets." + methodName + ": name must be a string");
+      if (opts.service === "" || opts.name === "") {
+        const err = new TypeError("Expected service and name to not be empty");
         err.code = "ERR_INVALID_ARG_TYPE";
         throw err;
       }
@@ -257,9 +257,14 @@ const BUN_HELPERS: &str = r#"
       async set(opts) {
         validateArgs(opts, "set");
         if (typeof opts.value !== "string") {
-          const err = new TypeError("Bun.secrets.set: value must be a string");
+          const err = new TypeError("Expected 'value' to be a string");
           err.code = "ERR_INVALID_ARG_TYPE";
           throw err;
+        }
+        if (opts.value === "") {
+          // Setting empty string deletes the entry (matches Bun semantics).
+          _store.delete(opts.service + "::" + opts.name);
+          return;
         }
         _store.set(opts.service + "::" + opts.name, opts.value);
       },
