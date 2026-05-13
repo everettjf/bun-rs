@@ -1454,11 +1454,32 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             __esModule: true,
             crash_handler: { getMachOUUID: () => null, panic: () => {} },
             quickAndDirtyJavaScriptSyntaxHighlighter: (s) => String(s),
+            highlighter: (s) => String(s),
             fs: {},
             jsc: {},
             shellInternals: {},
             CookieMap: undefined,
             Cookie: undefined,
+            // Bun's internal probes — all return false / no-op.
+            hasNonReifiedStatic: (_v) => false,
+            isReifiedStatic: (_v) => false,
+            heapSize: () => 0,
+            generateHeapSnapshot: () => "{}",
+            libcPathForDlopen: () => null,
+            getMaxFileDescriptors: () => 65536,
+            BunStringToThreadSafe: (s) => s,
+            toUTF16AllocSentinel: (s) => s,
+            toUTF16Alloc: (s) => s,
+            escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            escapeHTML: globalThis.Bun ? globalThis.Bun.escapeHTML : (s) => s,
+            fnGetMimeType: (_p) => "application/octet-stream",
+            sysErrorNameFromLibuv: (code) => {
+                const map = { "-4058": "ENOENT", "-2": "ENOENT", "-4068": "EACCES" };
+                return map[String(code)] || ("UNKNOWN_" + code);
+            },
+            cssParse: (s) => ({ raw: String(s) }),
+            cssLineCol: (_s, _i) => [1, 1],
+            nodeFsExtensions: {},
         })"#,
         Some("[bun:internal-for-testing]"),
     )

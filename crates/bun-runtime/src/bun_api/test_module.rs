@@ -63,6 +63,10 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 fn.mockImplementationOnce = fn.mockImplementation;
                 fn.mockName = (n) => { fn._mockName = n; return fn; };
                 fn.getMockName = () => fn._mockName || "jest.fn()";
+                // mock() return is a disposable: `using fn = mock(...)`
+                // calls mockRestore on scope exit.
+                Object.defineProperty(fn, Symbol.dispose, { value: () => fn.mockRestore(), configurable: true });
+                Object.defineProperty(fn, Symbol.asyncDispose, { value: async () => fn.mockRestore(), configurable: true });
                 return fn;
             }
             function mock(impl) { return mkMock(impl); }

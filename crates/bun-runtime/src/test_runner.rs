@@ -78,7 +78,33 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                     // beforeAll appears in every nested test's inherited list,
                     // but should still only run once.
                     const ranBeforeAll = new WeakSet();
-                    const allAfterAlls = [];
+                    // Per-describe-path afterAll bookkeeping. We fire afterAll
+                    // hooks when the next test moves OUT of a describe path,
+                    // not at end-of-file. This matches jest semantics:
+                    //   describe(A) { describe(B) { it; } it(C); }
+                    // afterAll(B) fires before it(C) runs, so it(C) sees
+                    // state set by afterAll(B).
+                    let prevPath = [];
+                    const pathAfterAlls = new Map(); // pathKey -> [hooks]
+                    function pathKey(p) { return p.join("\x1f"); }
+                    async function fireExitedAfterAlls(newPath) {
+                        let i = 0;
+                        while (i < prevPath.length && i < newPath.length && prevPath[i] === newPath[i]) i++;
+                        // Fire afterAlls from the deepest exited level out to i+1.
+                        for (let depth = prevPath.length; depth > i; depth--) {
+                            const k = pathKey(prevPath.slice(0, depth));
+                            const hooks = pathAfterAlls.get(k);
+                            if (hooks) {
+                                pathAfterAlls.delete(k);
+                                for (let j = hooks.length - 1; j >= 0; j--) {
+                                    try { await runHook(hooks[j]); } catch (e) {
+                                        console.log("  ✗ afterAll threw: " + (e && e.message ? e.message : e));
+                                    }
+                                }
+                            }
+                        }
+                        prevPath = newPath;
+                    }
                     // Hook runner that supports jest's done(err?) callback
                     // pattern: if the hook function declares a parameter, we
                     // create a Promise that resolves when done() is called
@@ -103,6 +129,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                     }
                     async function runOne(t) {
                         const fullName = t.path.length ? t.path.concat(t.name).join(" > ") : t.name;
+                        // Fire afterAll hooks for any describe levels the previous
+                        // test was inside that we've now left.
+                        await fireExitedAfterAlls(t.path);
                         if (t.skip) {
                             console.log("  - " + fullName + " (skipped)");
                             skipped++;
@@ -117,12 +146,15 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                 }
                             }
                         }
-                        // Collect this test's afterAll hooks so they fire at end-of-file
-                        // (dedup happens on the same WeakSet basis).
-                        for (const h of t.afterAll || []) {
-                            if (typeof h === "function" && !allAfterAlls.includes(h)) {
-                                allAfterAlls.push(h);
+                        // Register this test's afterAll hooks at the deepest level
+                        // of its path (so they fire when the next test exits that level).
+                        if (t.afterAll && t.afterAll.length > 0) {
+                            const k = pathKey(t.path);
+                            const seen = pathAfterAlls.get(k) || [];
+                            for (const h of t.afterAll) {
+                                if (typeof h === "function" && !seen.includes(h)) seen.push(h);
                             }
+                            pathAfterAlls.set(k, seen);
                         }
                         try {
                             for (const h of t.beforeEach) await runHook(h);
@@ -166,13 +198,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                         }
                     }
                     for (const t of all) await runOne(t);
-                    // afterAll hooks run in reverse insertion order — innermost
-                    // describe finishes last.
-                    for (let i = allAfterAlls.length - 1; i >= 0; i--) {
-                        try { await runHook(allAfterAlls[i]); } catch (e) {
-                            console.log("  ✗ afterAll threw: " + (e && e.message ? e.message : e));
-                        }
-                    }
+                    // End of file: fire all remaining afterAll hooks (paths
+                    // we never exited because they were the last ones).
+                    await fireExitedAfterAlls([]);
                     return { pass, fail, skipped, failed };
                 })()
                 "#,
