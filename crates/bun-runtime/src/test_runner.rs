@@ -79,9 +79,24 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                     // but should still only run once.
                     const ranBeforeAll = new WeakSet();
                     const allAfterAlls = [];
+                    // Hook runner that supports jest's done(err?) callback
+                    // pattern: if the hook function declares a parameter, we
+                    // create a Promise that resolves when done() is called
+                    // (or rejects with the error argument).
+                    async function runHook(h) {
+                        if (typeof h !== "function") return;
+                        if (h.length >= 1) {
+                            await new Promise((resolve, reject) => {
+                                const done = (err) => { if (err) reject(err); else resolve(); };
+                                Promise.resolve(h(done)).then(undefined, reject);
+                            });
+                        } else {
+                            await h();
+                        }
+                    }
                     async function runHooks(hooks, label) {
                         for (const h of hooks || []) {
-                            try { await h(); } catch (e) {
+                            try { await runHook(h); } catch (e) {
                                 console.log("  ✗ " + label + " threw: " + (e && e.message ? e.message : e));
                             }
                         }
@@ -97,7 +112,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                         for (const h of t.beforeAll || []) {
                             if (typeof h === "function" && !ranBeforeAll.has(h)) {
                                 ranBeforeAll.add(h);
-                                try { await h(); } catch (e) {
+                                try { await runHook(h); } catch (e) {
                                     console.log("  ✗ beforeAll threw: " + (e && e.message ? e.message : e));
                                 }
                             }
@@ -110,10 +125,15 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             }
                         }
                         try {
-                            for (const h of t.beforeEach) await h();
+                            for (const h of t.beforeEach) await runHook(h);
                             let result;
                             try {
-                                result = await t.fn();
+                                result = await (t.fn.length >= 1
+                                  ? new Promise((res, rej) => {
+                                      const done = (e) => { if (e) rej(e); else res(); };
+                                      Promise.resolve(t.fn(done)).then(undefined, rej);
+                                    })
+                                  : t.fn());
                                 void result;
                                 if (t.failing) {
                                     throw new Error("test was marked .failing but passed");
@@ -123,7 +143,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     // .failing: error is expected; treat as pass.
                                     // afterEach: inner→outer (reverse order).
                                     for (let i = t.afterEach.length - 1; i >= 0; i--) {
-                                        try { await t.afterEach[i](); } catch {}
+                                        try { await runHook(t.afterEach[i]); } catch {}
                                     }
                                     console.log("  ✓ " + fullName + " (failing, threw as expected)");
                                     pass++;
@@ -133,7 +153,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             }
                             // afterEach: inner-most first (jest semantics).
                             for (let i = t.afterEach.length - 1; i >= 0; i--) {
-                                await t.afterEach[i]();
+                                await runHook(t.afterEach[i]);
                             }
                             console.log("  ✓ " + fullName);
                             pass++;
@@ -149,7 +169,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                     // afterAll hooks run in reverse insertion order — innermost
                     // describe finishes last.
                     for (let i = allAfterAlls.length - 1; i >= 0; i--) {
-                        try { await allAfterAlls[i](); } catch (e) {
+                        try { await runHook(allAfterAlls[i]); } catch (e) {
                             console.log("  ✗ afterAll threw: " + (e && e.message ? e.message : e));
                         }
                     }
