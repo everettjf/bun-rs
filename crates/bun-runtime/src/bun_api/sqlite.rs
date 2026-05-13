@@ -302,6 +302,55 @@ fn build_stmt<'ctx>(
     bind(ctx, &obj, "finalize", |args| {
         Ok(Value::new_undefined(args.context()))
     });
+    // .safeIntegers(bool) — toggle BigInt return mode (no-op stub).
+    bind(ctx, &obj, "safeIntegers", |args| {
+        let _ = args.get(0).to_bool();
+        Ok(args.get(0).context().eval("undefined", None).unwrap_or_else(|_| Value::new_undefined(args.context())))
+    });
+    // .values(...params) — return rows as arrays of values (not objects).
+    let h_values = handle.clone();
+    let sql_values = sql.clone();
+    bind(ctx, &obj, "values", move |args| {
+        let g = h_values.borrow();
+        let conn = g.as_ref().ok_or("database closed")?;
+        let mut stmt = conn.prepare(&sql_values).map_err(|e| e.to_string())?;
+        let params = collect_params(&args, 0);
+        bind_params(&mut stmt, &params).map_err(|e| e.to_string())?;
+        let col_count = stmt.column_count();
+        let mut rows = stmt.raw_query();
+        let ctx = args.context();
+        let arr_v = ctx.eval("[]", Some("[sqlite-values]")).map_err(|e| e.to_string())?;
+        let arr = arr_v.to_object().map_err(|e| e.to_string())?;
+        let mut i = 0u32;
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let row_arr_v = ctx.eval("[]", Some("[sqlite-row-arr]")).map_err(|e| e.to_string())?;
+            let row_arr = row_arr_v.to_object().map_err(|e| e.to_string())?;
+            for c in 0..col_count {
+                let val = match row.get_ref(c).map_err(|e| e.to_string())? {
+                    rusqlite::types::ValueRef::Null => Value::new_null(ctx),
+                    rusqlite::types::ValueRef::Integer(n) => Value::new_number(ctx, n as f64),
+                    rusqlite::types::ValueRef::Real(f) => Value::new_number(ctx, f),
+                    rusqlite::types::ValueRef::Text(t) => {
+                        Value::new_string(ctx, &String::from_utf8_lossy(t))
+                    }
+                    rusqlite::types::ValueRef::Blob(b) => {
+                        crate::buffer::buffer_from_bytes(ctx, b.to_vec())
+                    }
+                };
+                row_arr.set_property(&c.to_string(), &val).ok();
+            }
+            row_arr.set_property("length", &Value::new_number(ctx, col_count as f64)).ok();
+            arr.set_property(&i.to_string(), &row_arr_v).ok();
+            i += 1;
+        }
+        arr.set_property("length", &Value::new_number(ctx, i as f64)).ok();
+        Ok(arr_v)
+    });
+    // .toString() — return the SQL.
+    let sql_for_str = sql.clone();
+    bind(ctx, &obj, "toString", move |args| {
+        Ok(Value::new_string(args.context(), &sql_for_str))
+    });
     // Symbol.dispose / asyncDispose on Statement.
     let stmt_dispose = ctx
         .eval(

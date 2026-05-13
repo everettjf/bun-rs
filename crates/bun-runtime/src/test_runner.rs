@@ -498,6 +498,25 @@ const GLOBALS: &str = r#"
       toBeWithin(min, max) {
         check(typeof received === "number" && received >= min && received < max, [min, max], "toBeWithin");
       },
+      // .toRun() — Bun-extension: received is [path, ...args]; runs as a
+      // subprocess and asserts exit code 0. Synchronous via spawnSync.
+      toRun(opts) {
+        const cp = require("node:child_process");
+        let bin = process.argv[0] || "bun-rs";
+        let argv = Array.isArray(received) ? received : [received];
+        if (typeof argv[0] !== "string") {
+          check(false, undefined, "toRun");
+          return;
+        }
+        const env = (opts && opts.env) ? { ...process.env, ...opts.env } : process.env;
+        const cwd = opts && opts.cwd;
+        const r = cp.spawnSync(bin, argv, { env, cwd });
+        const ok = r.status === 0;
+        check(ok, undefined, "toRun");
+      },
+      toRunSuccessfully(_opts) {
+        return this.toRun(_opts);
+      },
     };
     obj.resolves = {
       __proto__: null,

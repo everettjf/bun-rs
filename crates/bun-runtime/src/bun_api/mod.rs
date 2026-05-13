@@ -118,10 +118,29 @@ const BUN_HELPERS: &str = r#"
   // JSON5 — JSON with comments + trailing commas. Use JSC's native JSON
   // for the strict subset; emulate JSON5 by stripping comments and
   // converting single-quoted strings before parsing.
+  function _maxDepthCheck(s) {
+    // Guard against stack overflows on extreme nesting. Bun's JSONC.parse
+    // throws RangeError at ~10k depth; JSC's JSON.parse silently accepts.
+    let depth = 0, max = 0, inStr = false, esc = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (esc) { esc = false; continue; }
+      if (inStr) {
+        if (c === 92) esc = true;            // backslash
+        else if (c === 34) inStr = false;    // closing quote
+        continue;
+      }
+      if (c === 34) { inStr = true; continue; }
+      if (c === 91 || c === 123) { depth++; if (depth > max) max = depth; }
+      else if (c === 93 || c === 125) { depth--; }
+    }
+    if (max > 8192) throw new RangeError("JSON parse depth exceeded (max=8192)");
+  }
   if (typeof globalThis.JSON5 === "undefined") {
     globalThis.JSON5 = {
       parse(text, reviver) {
         let s = String(text);
+        _maxDepthCheck(s);
         // Strip /* ... */ and // ... comments.
         s = s.replace(/\/\*[\s\S]*?\*\//g, "");
         s = s.replace(/(^|[^:"])\/\/.*$/gm, "$1");
