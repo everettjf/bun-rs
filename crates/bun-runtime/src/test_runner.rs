@@ -624,7 +624,7 @@ const GLOBALS: &str = r#"
       toBeTrue()  { check(received === true, undefined, "toBeTrue"); },
       toBeFalse() { check(received === false, undefined, "toBeFalse"); },
       toBeBoolean() { check(typeof received === "boolean", undefined, "toBeBoolean"); },
-      toBeString() { check(typeof received === "string", undefined, "toBeString"); },
+      toBeString() { check(typeof received === "string" || received instanceof String, undefined, "toBeString"); },
       toBeNumber() { check(typeof received === "number" && !isNaN(received), undefined, "toBeNumber"); },
       toBeFinite() { check(Number.isFinite(received), undefined, "toBeFinite"); },
       toBeInteger() { check(Number.isInteger(received), undefined, "toBeInteger"); },
