@@ -814,6 +814,10 @@ const BUN_HELPERS: &str = r##"
 
   // ── Bun.gc / Bun.allocUnsafe / Bun.deepEquals / Bun.deepMatch ───────
   Bun.gc = function (sync) { /* no-op */ return 0; };
+  Bun.generateHeapSnapshot = function (_format) {
+    return { version: 2, type: "Heap", nodes: [], edges: [] };
+  };
+  Bun.estimateShallowMemoryUsageOf = function (_v) { return 0; };
   Bun.allocUnsafe = function (n) { return new Uint8Array(n); };
   Bun.deepEquals = function (a, b, strict) {
     if (Object.is(a, b)) return true;
@@ -2219,6 +2223,7 @@ fn build_jsc_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             heapStats: () => ({ heapSize: 0, heapCapacity: 0, objectCount: 0 }),
             heapSize: () => 0,
             memoryUsage: () => ({}),
+            estimateShallowMemoryUsageOf: (_v) => 0,
             gcAndSweep: () => 0,
             fullGC: () => {},
             edenGC: () => {},
