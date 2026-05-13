@@ -553,6 +553,9 @@ const BUN_HELPERS: &str = r#"
       get signalCode() { return null; },
       ref() {}, unref() {},
       readable: null, writable: null,
+      resourceUsage() {
+        return { cpuTime: { user: 0n, system: 0n, total: 0n }, maxRSS: 0 };
+      },
     };
     attachDispose(result, () => result.kill(), async () => { result.kill(); await result.exited; });
     return result;
@@ -732,9 +735,43 @@ const BUN_HELPERS: &str = r#"
     return obj;
   };
   Bun.$.escape = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
-  Bun.$.cwd = () => this;
-  Bun.$.env = () => this;
+  Bun.$.cwd = (_d) => Bun.$;
+  Bun.$.env = (_e) => Bun.$;
   Bun.$.nothrow = () => Bun.$;
+  Bun.$.quiet = () => Bun.$;
+  Bun.$.throws = (_b) => Bun.$;
+  Bun.$.braces = function (_strings) {
+    // Brace expansion: very minimal — return a single-element array of the
+    // input as a string. Real shell brace expansion is unsupported.
+    return [String(_strings.raw ? _strings.raw[0] : _strings)];
+  };
+  Bun.$.ShellError = class ShellError extends Error {
+    constructor(message, code) { super(message); this.name = "ShellError"; this.exitCode = code || 0; }
+  };
+  Bun.$.Shell = class Shell {
+    constructor() {}
+    cwd() { return this; }
+    env() { return this; }
+    quiet() { return this; }
+    nothrow() { return this; }
+  };
+
+  // Bun.jest(path) — return the bun:test exports object so tests that
+  // dynamically `Bun.jest(...)` can use describe/it/expect at runtime.
+  Bun.jest = (_p) => {
+    return {
+      describe: globalThis.describe,
+      test: globalThis.test,
+      it: globalThis.it || globalThis.test,
+      expect: globalThis.expect,
+      beforeAll: globalThis.beforeAll,
+      afterAll: globalThis.afterAll,
+      beforeEach: globalThis.beforeEach,
+      afterEach: globalThis.afterEach,
+      mock: globalThis.mock,
+      spyOn: globalThis.spyOn,
+    };
+  };
 
   // ── Bun.listen / Bun.connect — TCP (stub, throws on actual use) ─────
   Bun.listen = function (opts) {
