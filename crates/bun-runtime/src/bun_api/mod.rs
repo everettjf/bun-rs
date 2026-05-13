@@ -380,13 +380,24 @@ const BUN_HELPERS: &str = r##"
     });
   }
   // Escape standalone `"` to `&quot;` in TEXT content (outside HTML tag
-  // attributes). pulldown-cmark leaves them literal; Bun's md escapes them.
+  // attributes and outside <script>/<style> raw content). pulldown-cmark
+  // leaves them literal; Bun's md escapes them.
   function _escapeQuotesInText(html) {
-    // Walk through, alternating between "in tag" and "in text". Only
-    // escape inside text segments.
     let out = "";
     let i = 0;
+    let inRaw = null; // "script" | "style" | null
     while (i < html.length) {
+      if (inRaw) {
+        const end = html.toLowerCase().indexOf("</" + inRaw, i);
+        if (end < 0) { out += html.slice(i); break; }
+        out += html.slice(i, end);
+        const gt = html.indexOf(">", end);
+        if (gt < 0) { out += html.slice(end); break; }
+        out += html.slice(end, gt + 1);
+        i = gt + 1;
+        inRaw = null;
+        continue;
+      }
       const lt = html.indexOf("<", i);
       if (lt < 0) {
         out += html.slice(i).replace(/"/g, "&quot;");
@@ -398,15 +409,34 @@ const BUN_HELPERS: &str = r##"
         out += html.slice(lt);
         break;
       }
-      out += html.slice(lt, gt + 1);
+      const tag = html.slice(lt, gt + 1);
+      out += tag;
+      const m = tag.match(/^<(script|style)\b/i);
+      if (m) inRaw = m[1].toLowerCase();
       i = gt + 1;
     }
     return out;
+  }
+  function _bunifyMarkdownHtml(html) {
+    // 1. GFM table style="text-align: X" → align="X" (Bun's GFM tables).
+    html = html.replace(/<(th|td) style="text-align: (left|center|right)">/g,
+      (_, tag, align) => `<${tag} align="${align}">`);
+    // 2. GFM task lists: pulldown emits
+    //    <li><input checked="" disabled="" type="checkbox"> text</li>
+    //    Bun emits
+    //    <li class="task-list-item"><input checked class="task-list-item-checkbox" disabled type="checkbox">text</li>
+    html = html.replace(/<li><input (checked="" )?disabled="" type="checkbox">\s?/g,
+      (_, checked) => {
+        const c = checked ? "checked " : "";
+        return `<li class="task-list-item"><input ${c}class="task-list-item-checkbox" disabled type="checkbox">`;
+      });
+    return html;
   }
   function _renderMarkdownHtml(src, opts) {
     const decoded = _decodeMdInput(src);
     let html = Bun.__rust_markdown_html(decoded);
     html = _escapeQuotesInText(html);
+    html = _bunifyMarkdownHtml(html);
     if (opts && opts.headings) {
       const ids = opts.headings === true || !!opts.headings.ids;
       const autolink = opts.headings === true || (opts.headings.autolink && ids);
