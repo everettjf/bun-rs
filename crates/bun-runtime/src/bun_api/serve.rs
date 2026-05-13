@@ -223,6 +223,12 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                     s.address = {{ family: "IPv4", address: "127.0.0.1", port: {port} }};
                     s.fetch = function (req) {{
                         try {{
+                            // Type validation matching Bun: rejects primitives.
+                            const t = typeof req;
+                            if (t === "bigint") return Promise.reject(new TypeError("fetch() expects a string, but received BigInt"));
+                            if (t === "symbol") return Promise.reject(new TypeError("fetch() expects a string, but received Symbol"));
+                            if (t === "boolean") return Promise.reject(new TypeError("fetch() expects a string, but received Boolean"));
+                            if (t === "number") return Promise.reject(new TypeError("fetch() expects a string, but received Number"));
                             const r = (typeof req === "string" || req instanceof URL) ? new Request(req) : req;
                             return Promise.resolve(new Response("", {{ status: 404 }}));
                         }} catch (e) {{
