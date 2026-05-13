@@ -466,10 +466,12 @@ const GLOBALS: &str = r#"
         const next = template.charAt(p + 1);
         if (next === "%") { out += "%"; p += 2; continue; }
         const v = values[i++];
-        if (next === "o" || next === "O" || next === "j") out += safeStringify(v);
-        else if (next === "f" || next === "d" || next === "i") out += String(Number(v));
-        else if (next === "s") out += String(v);
-        else out += String(v);
+        try {
+          if (next === "o" || next === "O" || next === "j") out += safeStringify(v);
+          else if (next === "f" || next === "d" || next === "i") out += String(Number(v));
+          else if (next === "s") out += (typeof v === "symbol" ? v.toString() : String(v));
+          else out += (typeof v === "symbol" ? v.toString() : String(v));
+        } catch { out += "[?]"; }
         p += 2;
         continue;
       }
