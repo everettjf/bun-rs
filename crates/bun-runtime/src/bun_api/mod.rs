@@ -550,17 +550,51 @@ const BUN_HELPERS: &str = r##"
   });
 
   // ── Bun.randomUUIDv7 ────────────────────────────────────────────────
+  // UUIDv7: 48-bit Unix ms timestamp | 4-bit version (0111) | 12 random
+  // | 2-bit variant (10) | 62 random. Maintains monotonicity within a ms
+  // via an in-process counter on the random bits.
+  let _uuidv7LastMs = 0n;
+  let _uuidv7Counter = 0n;
   Bun.randomUUIDv7 = function (encoding, timestamp) {
-    const ts = BigInt(timestamp !== undefined ? timestamp : Date.now());
+    const tsArg = (typeof encoding === "number" && timestamp === undefined) ? encoding : timestamp;
+    const ts = BigInt(tsArg !== undefined ? tsArg : Date.now());
+    let extra;
+    if (ts === _uuidv7LastMs) {
+      _uuidv7Counter += 1n;
+      extra = _uuidv7Counter;
+    } else {
+      _uuidv7LastMs = ts;
+      _uuidv7Counter = 0n;
+      extra = 0n;
+    }
     const tsHex = ts.toString(16).padStart(12, "0");
-    let rest = "";
-    for (let i = 0; i < 20; i++) rest += Math.floor(Math.random() * 16).toString(16);
-    const hex = tsHex + "7" + rest.slice(0, 3) + ((8 + Math.floor(Math.random() * 4)).toString(16)) + rest.slice(3, 18);
-    const u = hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32);
-    if (encoding === "hex") return hex;
-    if (encoding === "base64") return btoa(String.fromCharCode(...hex.match(/../g).map(b => parseInt(b, 16))));
-    if (encoding === "buffer") return new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
-    return u;
+    // Monotonicity within a single ms: per-ms incrementing counter occupies
+    // the top of the random portion so lexical (and byte) sort matches
+    // insertion order. rand_a (3 hex / 12 bits) = top of counter; variant
+    // nibble fixed at "8" within a single ms so it doesn't break sort
+    // when counter rolls over; rand_b's top 11 hex = rest of counter (44
+    // bits); trailing 4 hex = random for entropy.
+    const ctr = (extra & 0xfffffffffffffn); // 56 bits
+    const ctrTop3 = ((ctr >> 44n) & 0xfffn).toString(16).padStart(3, "0");
+    const ctrLow11 = (ctr & 0xfffffffffffn).toString(16).padStart(11, "0");
+    let randTail = "";
+    for (let i = 0; i < 4; i++) randTail += Math.floor(Math.random() * 16).toString(16);
+    const hex = tsHex + "7" + ctrTop3 + "8" + ctrLow11 + randTail;
+    const enc = (typeof encoding === "string") ? encoding : "";
+    const dashed = hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32);
+    if (enc === "base64") {
+      const bytes = hex.match(/../g).map(b => parseInt(b, 16));
+      return btoa(String.fromCharCode(...bytes));
+    }
+    if (enc === "buffer") {
+      const bytes = hex.match(/../g).map(b => parseInt(b, 16));
+      return Buffer.from(bytes);
+    }
+    if (enc === "binary" || enc === "bytes") {
+      return new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+    }
+    // "hex" / default: UUID dash-separated string.
+    return dashed;
   };
   Bun.randomUUIDv5 = function (name, namespace) {
     // Deterministic UUID v5-ish (uses Bun.hash, NOT real SHA-1). Good
