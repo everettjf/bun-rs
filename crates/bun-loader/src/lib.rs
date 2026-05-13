@@ -97,8 +97,15 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
         _ => {}
     }
 
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| LoaderError::Io(path.to_path_buf(), e))?;
+    // Text-asset extensions allow non-UTF8 content (latin1, etc); fall
+    // back to lossy decoding so the import succeeds with replacement
+    // characters where the bytes aren't valid UTF-8.
+    let source = if matches!(ext.as_str(), "txt" | "html" | "css") {
+        let bytes = std::fs::read(path).map_err(|e| LoaderError::Io(path.to_path_buf(), e))?;
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        std::fs::read_to_string(path).map_err(|e| LoaderError::Io(path.to_path_buf(), e))?
+    };
     match ext.as_str() {
         "json" => {
             // Strict JSON — fast path: embed source as JS string literal

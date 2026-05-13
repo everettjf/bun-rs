@@ -120,6 +120,18 @@ fn install_extras(ctx: &Context) {
                 ].join("\n");
                 console.log(out);
             };
+            // Bun adds console.write(...) — like process.stdout.write but
+            // accepts any arg (string, buffer, etc) without newline.
+            c.write = function (...args) {
+                for (const a of args) {
+                    if (typeof a === "string") process.stdout.write(a);
+                    else if (a && typeof a === "object" && (a instanceof Uint8Array || (a.buffer && typeof a.byteLength === "number"))) {
+                        process.stdout.write(a);
+                    } else {
+                        process.stdout.write(String(a));
+                    }
+                }
+            };
             c.profile = function () {};
             c.profileEnd = function () {};
             c.timeStamp = function () {};
