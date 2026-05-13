@@ -113,6 +113,15 @@ const POLYFILL: &str = r#"
         }
         return out;
       }
+      if (encoding === "utf16le" || encoding === "ucs2" || encoding === "ucs-2") {
+        const buf = new Buffer(s.length * 2);
+        for (let i = 0; i < s.length; i++) {
+          const c = s.charCodeAt(i);
+          buf[i * 2] = c & 0xff;
+          buf[i * 2 + 1] = (c >> 8) & 0xff;
+        }
+        return buf;
+      }
       throw new TypeError("Unsupported encoding: " + encoding);
     }
 
@@ -197,6 +206,14 @@ const POLYFILL: &str = r#"
             s += lut[(view[i + 1] & 0xf) << 2];
             s += "=";
           }
+        }
+        return s;
+      }
+      if (encoding === "utf16le" || encoding === "ucs2" || encoding === "ucs-2") {
+        // Interpret bytes as little-endian UTF-16 code units.
+        let s = "";
+        for (let i = 0; i + 1 < view.length; i += 2) {
+          s += String.fromCharCode(view[i] | (view[i + 1] << 8));
         }
         return s;
       }
