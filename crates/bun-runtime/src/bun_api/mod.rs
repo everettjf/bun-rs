@@ -788,7 +788,124 @@ const BUN_HELPERS: &str = r##"
     return h[0] * 1e9 + h[1];
   };
   Bun.openInEditor = () => { throw new Error("openInEditor not implemented"); };
-  Bun.color = (n, _kind) => String(n);
+  // Bun.color(input, format) — accept various inputs (hex, rgb obj, array,
+  // CSS function strings) and emit in the requested format.
+  Bun.color = function (input, format) {
+    function parseRGBA(v) {
+      // Returns {r, g, b, a} or null
+      if (v == null) return null;
+      if (typeof v === "string") {
+        let s = v.trim().toLowerCase();
+        // #rgb / #rgba / #rrggbb / #rrggbbaa
+        let m = s.match(/^#([0-9a-f]{3,8})$/);
+        if (m) {
+          const h = m[1];
+          const expand3 = (c) => parseInt(c + c, 16);
+          if (h.length === 3) return { r: expand3(h[0]), g: expand3(h[1]), b: expand3(h[2]), a: 1 };
+          if (h.length === 4) return { r: expand3(h[0]), g: expand3(h[1]), b: expand3(h[2]), a: expand3(h[3]) / 255 };
+          if (h.length === 6) return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16), a: 1 };
+          if (h.length === 8) return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16), a: parseInt(h.slice(6, 8), 16) / 255 };
+        }
+        // rgb()/rgba()
+        m = s.match(/^rgba?\s*\(([^)]+)\)$/);
+        if (m) {
+          const parts = m[1].split(/[,\/\s]+/).filter(Boolean);
+          if (parts.length >= 3) {
+            const r = parseInt(parts[0], 10);
+            const g = parseInt(parts[1], 10);
+            const b = parseInt(parts[2], 10);
+            const a = parts.length >= 4 ? parseFloat(parts[3]) : 1;
+            return { r, g, b, a };
+          }
+        }
+        // Named: support a few common names. Most tests use {r,g,b}.
+        const named = {
+          red: [255, 0, 0], green: [0, 128, 0], blue: [0, 0, 255], white: [255, 255, 255],
+          black: [0, 0, 0], yellow: [255, 255, 0], cyan: [0, 255, 255], magenta: [255, 0, 255],
+          orange: [255, 165, 0], purple: [128, 0, 128], gray: [128, 128, 128], grey: [128, 128, 128],
+          transparent: [0, 0, 0],
+        };
+        if (named[s]) {
+          const [r, g, b] = named[s];
+          return { r, g, b, a: s === "transparent" ? 0 : 1 };
+        }
+      }
+      if (Array.isArray(v)) {
+        if (v.length >= 3) {
+          return { r: +v[0] | 0, g: +v[1] | 0, b: +v[2] | 0, a: v.length >= 4 ? (v[3] > 1 ? v[3] / 255 : v[3]) : 1 };
+        }
+      }
+      if (v && typeof v === "object") {
+        const r = +v.r, g = +v.g, b = +v.b;
+        if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+          const a = v.a == null ? 1 : (+v.a > 1 ? +v.a / 255 : +v.a);
+          return { r: r | 0, g: g | 0, b: b | 0, a };
+        }
+      }
+      if (typeof v === "number" && isFinite(v)) {
+        // 0xRRGGBB number → {r, g, b}
+        const n = v | 0;
+        return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff, a: 1 };
+      }
+      return null;
+    }
+    const rgba = parseRGBA(input);
+    if (!rgba) return null;
+    const fmt = format == null ? "{rgb}" : String(format);
+    const { r, g, b, a } = rgba;
+    const hex2 = (n) => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, "0");
+    switch (fmt) {
+      case "{rgb}": return { r, g, b };
+      case "{rgba}": return { r, g, b, a };
+      case "[rgb]": return [r, g, b];
+      case "[rgba]": return [r, g, b, Math.round(a * 255)];
+      case "rgb": return `rgb(${r}, ${g}, ${b})`;
+      case "rgba": return `rgba(${r}, ${g}, ${b}, ${a})`;
+      case "hex":
+      case "#":
+        return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+      case "HEX":
+        return `#${hex2(r).toUpperCase()}${hex2(g).toUpperCase()}${hex2(b).toUpperCase()}`;
+      case "hex-with-alpha":
+        return `#${hex2(r)}${hex2(g)}${hex2(b)}${hex2(Math.round(a * 255))}`;
+      case "number":
+        return ((r << 16) | (g << 8) | b);
+      case "ansi":
+      case "ansi-16m":
+      case "ansi-24bit":
+        return `\x1b[38;2;${r};${g};${b}m`;
+      case "ansi-256": {
+        // 6x6x6 cube approximation.
+        const cube = (n) => Math.round(n / 51);
+        const code = 16 + 36 * cube(r) + 6 * cube(g) + cube(b);
+        return `\x1b[38;5;${code}m`;
+      }
+      case "ansi-16": {
+        // Pick black/red/green/yellow/blue/magenta/cyan/white by quadrant.
+        const bright = r > 127 || g > 127 || b > 127 ? 90 : 30;
+        const code = bright + (r > 127 ? 1 : 0) + (g > 127 ? 2 : 0) + (b > 127 ? 4 : 0);
+        return `\x1b[${code}m`;
+      }
+      case "css":
+      case "HSL":
+      case "hsl":
+        // Convert RGB → HSL.
+        const rN = r / 255, gN = g / 255, bN = b / 255;
+        const mx = Math.max(rN, gN, bN), mn = Math.min(rN, gN, bN);
+        let h = 0, s = 0, l = (mx + mn) / 2;
+        if (mx !== mn) {
+          const d = mx - mn;
+          s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+          if (mx === rN) h = (gN - bN) / d + (gN < bN ? 6 : 0);
+          else if (mx === gN) h = (bN - rN) / d + 2;
+          else h = (rN - gN) / d + 4;
+          h *= 60;
+        }
+        return `hsl(${Math.round(h)}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+      default:
+        return null;
+    }
+  };
   Bun.resolveSync = (spec, _from) => spec;
   Bun.resolve = async (spec, _from) => spec;
 

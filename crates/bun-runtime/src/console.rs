@@ -12,40 +12,11 @@ pub fn install_console(ctx: &Context) {
     global
         .set_property("console", &console)
         .expect("set globalThis.console");
+    install_extras(ctx);
 }
 
-fn build_console<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
-    // Build an empty object and attach methods.
-    let obj_val = ctx
-        .eval("({})", Some("[console]"))
-        .expect("create plain object");
-    let obj = obj_val.to_object().expect("to_object");
-
-    for (name, stderr) in [
-        ("log", false),
-        ("info", false),
-        ("debug", false),
-        ("trace", false),
-        ("dir", false),
-        ("warn", true),
-        ("error", true),
-    ] {
-        let cb = Callback::new(ctx, name, move |args| {
-            let line = format_args_line(&args);
-            if stderr {
-                eprintln!("{line}");
-            } else {
-                println!("{line}");
-            }
-            Ok(Value::new_undefined(args.context()))
-        });
-        obj.set_property(name, &cb.value_in(ctx))
-            .expect("set console.method");
-        std::mem::forget(cb);
-    }
-
-    // console.time / .timeEnd / .timeLog — timestamped labeled timers.
-    // Stored in a JS Map on console itself so multiple labels are tracked.
+fn install_extras(ctx: &Context) {
+    // Run AFTER globalThis.console is set so the IIFE can pick it up.
     let _ = ctx.eval(
         r#"
         (function (c) {
@@ -77,7 +48,7 @@ fn build_console<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                     console.log(k + ": " + n);
                 };
             })();
-            c.countReset = function (label) { /* no-op */ };
+            c.countReset = function (_label) {};
             c.group = function (...args) { console.log(...args); };
             c.groupCollapsed = c.group;
             c.groupEnd = function () {};
@@ -91,8 +62,39 @@ fn build_console<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             c.clear = function () {};
         })(globalThis.console);
         "#,
-        Some("[console-extra]"),
+        Some("[console-extras]"),
     );
+}
+
+fn build_console<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    // Build an empty object and attach methods.
+    let obj_val = ctx
+        .eval("({})", Some("[console]"))
+        .expect("create plain object");
+    let obj = obj_val.to_object().expect("to_object");
+
+    for (name, stderr) in [
+        ("log", false),
+        ("info", false),
+        ("debug", false),
+        ("trace", false),
+        ("dir", false),
+        ("warn", true),
+        ("error", true),
+    ] {
+        let cb = Callback::new(ctx, name, move |args| {
+            let line = format_args_line(&args);
+            if stderr {
+                eprintln!("{line}");
+            } else {
+                println!("{line}");
+            }
+            Ok(Value::new_undefined(args.context()))
+        });
+        obj.set_property(name, &cb.value_in(ctx))
+            .expect("set console.method");
+        std::mem::forget(cb);
+    }
 
     obj.as_value()
 }
