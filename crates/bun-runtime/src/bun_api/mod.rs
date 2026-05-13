@@ -84,7 +84,17 @@ pub fn install_bun(ctx: &Context) {
     });
 
     bind(ctx, &bun, "sleepSync", |args| {
-        let ms = if args.len() >= 1 { args.get(0).to_number() } else { 0.0 };
+        if args.is_empty() {
+            return Err("sleepSync requires a number argument".to_string());
+        }
+        let v = args.get(0);
+        if !v.is_number() {
+            return Err("sleepSync: ms must be a number".to_string());
+        }
+        let ms = v.to_number();
+        if ms < 0.0 || ms.is_nan() {
+            return Err("sleepSync: ms must be a non-negative number".to_string());
+        }
         if ms.is_finite() && ms > 0.0 {
             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
         }
@@ -219,13 +229,57 @@ const BUN_HELPERS: &str = r#"
   Bun.Markdown.html = (src, opts) => Bun.markdown(src, opts).html;
   Bun.Markdown.render = Bun.markdown.render;
 
-  // ── Bun.secrets (stub) ──────────────────────────────────────────────
-  Bun.secrets = {
-    get: async () => null,
-    set: async () => {},
-    delete: async () => {},
-    list: async () => [],
-  };
+  // ── Bun.secrets — in-memory keychain stub ───────────────────────────
+  (function () {
+    const _store = new Map();
+    function validateArgs(opts, methodName) {
+      if (!opts || typeof opts !== "object" || Array.isArray(opts)) {
+        const err = new TypeError("Bun.secrets." + methodName + ": options must be an object");
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      if (typeof opts.service !== "string") {
+        const err = new TypeError("Bun.secrets." + methodName + ": service must be a string");
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      if (typeof opts.name !== "string") {
+        const err = new TypeError("Bun.secrets." + methodName + ": name must be a string");
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+    }
+    Bun.secrets = {
+      async get(opts) {
+        validateArgs(opts, "get");
+        return _store.get(opts.service + "::" + opts.name) ?? null;
+      },
+      async set(opts) {
+        validateArgs(opts, "set");
+        if (typeof opts.value !== "string") {
+          const err = new TypeError("Bun.secrets.set: value must be a string");
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        _store.set(opts.service + "::" + opts.name, opts.value);
+      },
+      async delete(opts) {
+        validateArgs(opts, "delete");
+        return _store.delete(opts.service + "::" + opts.name);
+      },
+      async list(opts) {
+        if (!opts || typeof opts.service !== "string") {
+          const err = new TypeError("Bun.secrets.list: service must be a string");
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        const prefix = opts.service + "::";
+        const out = [];
+        for (const k of _store.keys()) if (k.startsWith(prefix)) out.push(k.slice(prefix.length));
+        return out;
+      },
+    };
+  })();
 
   // ── Bun.inspect: pretty-print like Node.js util.inspect ─────────────
   Bun.inspect = function inspect(v, opts) {
