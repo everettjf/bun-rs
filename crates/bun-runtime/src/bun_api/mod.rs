@@ -73,6 +73,68 @@ pub fn install_bun(ctx: &Context) {
     file::install(ctx, &bun);
     serve::install(ctx, &bun);
 
+    // Bun.Glob.scan / scanSync / match — backed by globset + walkdir.
+    bind(ctx, &bun, "__rust_glob_scan", |args| {
+        use globset::Glob;
+        use walkdir::WalkDir;
+        let pattern = args.get(0).to_string();
+        let opts = args.get(1);
+        let cwd = if opts.is_object() {
+            opts.to_object().ok()
+                .and_then(|o| o.get_property("cwd").ok())
+                .filter(|v| v.is_string())
+                .map(|v| v.to_string())
+        } else { None }.unwrap_or_else(|| ".".to_string());
+        // Only consider OWN properties — Bun rejects prototype pollution.
+        let ctx_for_own = args.context();
+        let has_own = ctx_for_own
+            .eval("(o, k) => Object.prototype.hasOwnProperty.call(o, k)", Some("[hasOwn]"))
+            .ok()
+            .and_then(|f| f.to_object().ok());
+        let read_own = |key: &str, default: bool| -> bool {
+            if !opts.is_object() { return default; }
+            if let Some(ref has_own_fn) = has_own {
+                let key_v = Value::new_string(args.context(), key);
+                if let Ok(result) = has_own_fn.call(None, &[opts, key_v]) {
+                    if !result.to_bool() {
+                        return default;
+                    }
+                }
+            }
+            opts.to_object()
+                .ok()
+                .and_then(|o| o.get_property(key).ok())
+                .map(|v| v.to_bool())
+                .unwrap_or(default)
+        };
+        let follow_symlinks = read_own("followSymlinks", false);
+        let only_files = read_own("onlyFiles", true);
+        let glob = match Glob::new(&pattern) {
+            Ok(g) => g.compile_matcher(),
+            Err(e) => return Err(format!("invalid glob: {e}")),
+        };
+        let mut matches: Vec<String> = Vec::new();
+        let walker = WalkDir::new(&cwd).follow_links(follow_symlinks);
+        for entry in walker.into_iter().filter_map(|e| e.ok()) {
+            if only_files && !entry.file_type().is_file() { continue; }
+            let path = entry.path();
+            let rel = path.strip_prefix(&cwd).unwrap_or(path);
+            let rel_s = rel.to_string_lossy();
+            if rel_s.is_empty() { continue; }
+            if glob.is_match(rel.as_os_str()) {
+                matches.push(rel_s.into_owned());
+            }
+        }
+        let ctx = args.context();
+        let arr_v = ctx.eval("[]", Some("[glob-arr]")).map_err(|e| e.to_string())?;
+        let arr = arr_v.to_object().map_err(|e| e.to_string())?;
+        for (i, m) in matches.iter().enumerate() {
+            arr.set_property(&i.to_string(), &Value::new_string(ctx, m)).ok();
+        }
+        arr.set_property("length", &Value::new_number(ctx, matches.len() as f64)).ok();
+        Ok(arr_v)
+    });
+
     // Bun.cron.parse — backed by croner. Given a cron expression and a
     // start instant (or now), return the next firing instant as ISO string,
     // or null if no future match (e.g., Feb 30).
@@ -1602,8 +1664,14 @@ const BUN_HELPERS: &str = r##"
   // ── Bun.glob / Glob (best-effort) ───────────────────────────────────
   Bun.Glob = class Glob {
     constructor(pattern) { this.pattern = pattern; }
-    async *scan(opts) { /* empty iterator */ }
-    scanSync() { return []; }
+    *scanSync(opts) {
+      const normOpts = typeof opts === "string" ? { cwd: opts } : (opts || {});
+      const results = Bun.__rust_glob_scan(this.pattern, normOpts);
+      for (const r of results) yield r;
+    }
+    async *scan(opts) {
+      yield* this.scanSync(opts);
+    }
     match(s) {
       // Convert glob → regex (very simple).
       const re = new RegExp("^" + String(this.pattern)
