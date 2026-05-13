@@ -85,6 +85,73 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             ))
         });
 
+        // .slice(start, end?, type?) — returns a new Bun.file-like object
+        // whose body methods read the underlying file then slice the bytes.
+        let p_slice = path.clone();
+        bind(ctx, &obj, "slice", move |args| {
+            let ctx = args.context();
+            let start = if args.len() >= 1 { args.get(0).to_number() as i64 } else { 0 };
+            let end_opt = if args.len() >= 2 && !args.get(1).is_undefined() && !args.get(1).is_null() {
+                Some(args.get(1).to_number() as i64)
+            } else {
+                None
+            };
+            let mime = if args.len() >= 3 { args.get(2).to_string() } else { String::new() };
+            let total = std::fs::metadata(&p_slice).map(|m| m.len() as i64).unwrap_or(0);
+            let s = if start < 0 { (total + start).max(0) } else { start.min(total) };
+            let e = end_opt.map(|x| if x < 0 { (total + x).max(0) } else { x.min(total) }).unwrap_or(total);
+            let s_u = s as u64;
+            let e_u = if e > s { e as u64 } else { s_u };
+            let slice_len = (e_u - s_u) as usize;
+
+            let sub_v = ctx.eval("({})", Some("[Bun.file.slice]")).map_err(|e| e.to_string())?;
+            let sub = sub_v.to_object().map_err(|e| e.to_string())?;
+            sub.set_property("size", &Value::new_number(ctx, slice_len as f64)).ok();
+            sub.set_property("type", &Value::new_string(ctx, &mime)).ok();
+            sub.set_property("name", &Value::new_string(ctx, &p_slice)).ok();
+
+            let p_text = p_slice.clone();
+            let (s_t, e_t) = (s_u, e_u);
+            bind(ctx, &sub, "text", move |args| {
+                let bytes = read_slice(&p_text, s_t, e_t).map_err(|e| e)?;
+                let s = String::from_utf8_lossy(&bytes).into_owned();
+                Ok(Value::new_string(args.context(), &s))
+            });
+            let p_bytes = p_slice.clone();
+            let (s_b, e_b) = (s_u, e_u);
+            bind(ctx, &sub, "bytes", move |args| {
+                let bytes = read_slice(&p_bytes, s_b, e_b).map_err(|e| e)?;
+                Ok(Value::new_uint8_array(args.context(), bytes))
+            });
+            let p_ab = p_slice.clone();
+            let (s_a, e_a) = (s_u, e_u);
+            bind(ctx, &sub, "arrayBuffer", move |args| {
+                let bytes = read_slice(&p_ab, s_a, e_a).map_err(|e| e)?;
+                let u8 = Value::new_uint8_array(args.context(), bytes);
+                let getter = args
+                    .context()
+                    .eval("(u) => u.buffer", Some("[ab]"))
+                    .unwrap()
+                    .to_object()
+                    .map_err(|e| e.to_string())?;
+                getter.call(None, &[u8]).map_err(|e| e.to_string())
+            });
+            let p_json = p_slice.clone();
+            let (s_j, e_j) = (s_u, e_u);
+            bind(ctx, &sub, "json", move |args| {
+                let bytes = read_slice(&p_json, s_j, e_j).map_err(|e| e)?;
+                let s = String::from_utf8_lossy(&bytes).into_owned();
+                let ctx = args.context();
+                let parser = ctx
+                    .eval("(s) => JSON.parse(s)", Some("[json]"))
+                    .unwrap()
+                    .to_object()
+                    .map_err(|e| e.to_string())?;
+                parser.call(None, &[Value::new_string(ctx, &s)]).map_err(|e| e.to_string())
+            });
+            Ok(sub_v)
+        });
+
         Ok(v)
     });
 
@@ -102,6 +169,17 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         fs::write(&dest, bytes).map_err(|e| e.to_string())?;
         Ok(Value::new_number(args.context(), bytes.len() as f64))
     });
+}
+
+fn read_slice(path: &str, start: u64, end: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let len = end.saturating_sub(start) as usize;
+    let mut buf = vec![0u8; len];
+    let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(n);
+    Ok(buf)
 }
 
 fn guess_type(path: &str) -> String {

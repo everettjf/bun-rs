@@ -95,6 +95,14 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 },
                 setSystemTime: () => {},
                 setDefaultTimeout: () => {},
+                expectTypeOf: globalThis.expectTypeOf || (() => new Proxy(function(){}, { get: () => () => undefined, apply: () => undefined })),
+                // onTestFinished / onTestFailed — register a cleanup hook
+                // that runs at end of current test (or describe).
+                onTestFinished: (fn) => { globalThis.__bun_current_finally = (globalThis.__bun_current_finally || []); globalThis.__bun_current_finally.push(fn); },
+                onTestFailed: (_fn) => {},
+                test_listing: [],
+                isInDescribe: () => false,
+                getTestName: () => "",
             };
         })()"#,
         Some("[bun:test]"),
