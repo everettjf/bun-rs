@@ -67,6 +67,27 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Some("[fs.promises.open]"),
     ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[promises_v, exports_v])));
     exports.set_property("promises", &promises_v).unwrap();
+    // Also expose the fd-IO + symlink/link/chown/... async wrappers on
+    // fs.promises (they were added to `exports` via auto-wrap but not the
+    // promises namespace).
+    let _ = ctx.eval(
+        r#"
+        ((p, fs) => {
+            const promisify = (name) => async (...args) => {
+                if (typeof fs[name] === "function") return fs[name](...args);
+                throw new Error("fs.promises." + name + " not implemented");
+            };
+            for (const k of ["symlink", "link", "chmod", "chown", "lchown", "lchmod", "utimes", "futimes", "readlink", "stat", "lstat", "rename", "rmdir", "rm", "mkdir", "unlink", "truncate", "access", "copyFile"]) {
+                if (typeof p[k] !== "function" && typeof fs[k + "Sync"] === "function") {
+                    p[k] = promisify(k + "Sync");
+                } else if (typeof p[k] !== "function" && typeof fs[k] === "function") {
+                    p[k] = promisify(k);
+                }
+            }
+        })
+        "#,
+        Some("[fs.promises.copy-from-fs]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[promises_v, exports_v])));
 
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()

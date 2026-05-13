@@ -1539,24 +1539,30 @@ const BUN_HELPERS: &str = r##"
   });
 
   // ── Bun.dns — DNS lookups (uses node:dns/promises) ──────────────────
-  Bun.dns = {
-    lookup: async (host) => ({ address: "127.0.0.1", family: 4 }),
-    resolve: async () => ["127.0.0.1"],
-    resolve4: async () => ["127.0.0.1"],
-    resolve6: async () => ["::1"],
-    getServers: () => ["127.0.0.1"],
-    setDefaultResultOrder: () => {},
-    prefetch: (_host, _port) => {},
-    getCacheStats: () => ({
-      cacheHitsCompleted: 0,
-      cacheHitsInflight: 0,
-      cacheMisses: 0,
-      size: 0,
-      errors: 0,
-      totalCount: 0,
-    }),
-    cancel: () => {},
-  };
+  Bun.dns = (function () {
+    const _cache = new Set();
+    const _stats = { cacheHitsCompleted: 0, cacheHitsInflight: 0, cacheMisses: 0, size: 0, errors: 0, totalCount: 0 };
+    return {
+      lookup: async (host) => ({ address: "127.0.0.1", family: 4 }),
+      resolve: async () => ["127.0.0.1"],
+      resolve4: async () => ["127.0.0.1"],
+      resolve6: async () => ["::1"],
+      getServers: () => ["127.0.0.1"],
+      setDefaultResultOrder: () => {},
+      prefetch: (host, _port) => {
+        _stats.totalCount += 1;
+        if (_cache.has(host)) {
+          _stats.cacheHitsCompleted += 1;
+        } else {
+          _cache.add(host);
+          _stats.cacheMisses += 1;
+          _stats.size = _cache.size;
+        }
+      },
+      getCacheStats: () => ({ ..._stats }),
+      cancel: () => {},
+    };
+  })();
 
   // ── Bun.S3Client (stub) ─────────────────────────────────────────────
   Bun.S3Client = class S3Client {
