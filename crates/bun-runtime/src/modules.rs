@@ -46,6 +46,29 @@ pub fn install_module_loader(ctx: &Context) {
         .expect("install __bun_require");
     std::mem::forget(cb);
 
+    // Synchronous `require` global — for code (typically `.js`/`.cjs` files or
+    // Bun's own test suite) that calls `require("...")` directly instead of
+    // going through the rewriter's `await __bun_require` form. We resolve by
+    // awaiting the loader's promise from Rust; safe because await_promise
+    // drains the event loop while spinning.
+    let require_cb = Callback::new(ctx, "require", |args| {
+        if args.len() < 1 {
+            return Err("require: missing spec".to_string());
+        }
+        let spec = args.get(0).to_string();
+        // No explicit importer here — use cwd as the base.
+        let importer = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("anon.js");
+        let promise = load_module(args.context(), &spec, &importer)
+            .map_err(|e| e.to_string())?;
+        await_promise(args.context(), promise)
+    });
+    ctx.global_object()
+        .set_property("require", &require_cb.value_in(ctx))
+        .expect("install require");
+    std::mem::forget(require_cb);
+
     // Helper used by load_module to map a body Promise to the module's
     // exports object after the body finishes evaluating. Defined in JS so
     // `then` chaining is native.
@@ -120,6 +143,20 @@ fn load_module<'ctx>(
                 from: importer.to_path_buf(),
             },
         ));
+    }
+    // Bare `"bun"` returns the Bun namespace as a module. This is how Bun's
+    // own test suite imports the Bun API (`import { serve, file } from "bun"`).
+    // It must come before the resolver so a directory called `node_modules/bun`
+    // doesn't shadow it.
+    if spec == "bun" {
+        return Ok(crate::bun_api::bun_namespace_value(ctx));
+    }
+    // node-style `"fs/promises"` etc. as bare names (without the `node:` prefix).
+    // Bun's tests do `import * as fsp from "fs/promises"` heavily.
+    if let Some(builtin) = strip_node_alias(spec) {
+        if let Some(v) = crate::node_builtins::load(ctx, builtin) {
+            return Ok(v);
+        }
     }
     if let Some(v) = crate::node_builtins::load(ctx, spec) {
         // Allow bare `import "path"` etc. as a convenience.
@@ -273,6 +310,61 @@ fn load_module<'ctx>(
         })?;
 
     Ok(chained)
+}
+
+// Map bare-name aliases for node builtins (e.g. `"fs/promises"` →
+// `"fs/promises"` is already a builtin name, but Node also accepts the
+// same bare name without the `node:` prefix). Returns the inner name to
+// pass to `node_builtins::load`, or None if `spec` isn't a node builtin.
+fn strip_node_alias(spec: &str) -> Option<&str> {
+    // Common bare-name aliases used by Bun's test suite.
+    const NODE_BARE_NAMES: &[&str] = &[
+        "fs",
+        "fs/promises",
+        "path",
+        "path/posix",
+        "path/win32",
+        "os",
+        "util",
+        "util/types",
+        "events",
+        "stream",
+        "stream/web",
+        "stream/promises",
+        "stream/consumers",
+        "buffer",
+        "crypto",
+        "child_process",
+        "assert",
+        "assert/strict",
+        "querystring",
+        "url",
+        "tty",
+        "net",
+        "http",
+        "https",
+        "zlib",
+        "readline",
+        "readline/promises",
+        "process",
+        "timers",
+        "timers/promises",
+        "constants",
+        "string_decoder",
+        "punycode",
+        "module",
+        "v8",
+        "worker_threads",
+        "perf_hooks",
+        "dns",
+        "dns/promises",
+        "dgram",
+    ];
+    if NODE_BARE_NAMES.contains(&spec) {
+        Some(spec)
+    } else {
+        None
+    }
 }
 
 fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {

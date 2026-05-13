@@ -9,6 +9,54 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     v
 }
 
+// `util/types` — type predicates. Implemented inline (small) instead of
+// adding another huge polyfill.
+pub fn build_types<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            isAnyArrayBuffer: (v) => v instanceof ArrayBuffer || (typeof SharedArrayBuffer !== "undefined" && v instanceof SharedArrayBuffer),
+            isArrayBuffer: (v) => v instanceof ArrayBuffer,
+            isArrayBufferView: (v) => ArrayBuffer.isView(v),
+            isAsyncFunction: (v) => typeof v === "function" && v.constructor && v.constructor.name === "AsyncFunction",
+            isBigInt64Array: (v) => v instanceof BigInt64Array,
+            isBigUint64Array: (v) => v instanceof BigUint64Array,
+            isBooleanObject: (v) => typeof v === "object" && v !== null && Object.prototype.toString.call(v) === "[object Boolean]",
+            isBoxedPrimitive: (v) => /^\[object (Boolean|Number|String|Symbol|BigInt)\]$/.test(Object.prototype.toString.call(v)),
+            isDataView: (v) => v instanceof DataView,
+            isDate: (v) => v instanceof Date,
+            isFloat32Array: (v) => v instanceof Float32Array,
+            isFloat64Array: (v) => v instanceof Float64Array,
+            isGeneratorFunction: (v) => typeof v === "function" && v.constructor && v.constructor.name === "GeneratorFunction",
+            isGeneratorObject: (v) => typeof v === "object" && v !== null && typeof v.next === "function" && typeof v.return === "function" && typeof v.throw === "function",
+            isInt8Array: (v) => v instanceof Int8Array,
+            isInt16Array: (v) => v instanceof Int16Array,
+            isInt32Array: (v) => v instanceof Int32Array,
+            isMap: (v) => v instanceof Map,
+            isMapIterator: (v) => v && typeof v === "object" && v[Symbol.toStringTag] === "Map Iterator",
+            isNativeError: (v) => v instanceof Error,
+            isNumberObject: (v) => typeof v === "object" && v !== null && Object.prototype.toString.call(v) === "[object Number]",
+            isPromise: (v) => v && typeof v.then === "function",
+            isProxy: () => false,
+            isRegExp: (v) => v instanceof RegExp,
+            isSet: (v) => v instanceof Set,
+            isSetIterator: (v) => v && typeof v === "object" && v[Symbol.toStringTag] === "Set Iterator",
+            isSharedArrayBuffer: (v) => typeof SharedArrayBuffer !== "undefined" && v instanceof SharedArrayBuffer,
+            isStringObject: (v) => typeof v === "object" && v !== null && Object.prototype.toString.call(v) === "[object String]",
+            isSymbolObject: (v) => typeof v === "object" && v !== null && Object.prototype.toString.call(v) === "[object Symbol]",
+            isTypedArray: (v) => ArrayBuffer.isView(v) && !(v instanceof DataView),
+            isUint8Array: (v) => v instanceof Uint8Array,
+            isUint8ClampedArray: (v) => v instanceof Uint8ClampedArray,
+            isUint16Array: (v) => v instanceof Uint16Array,
+            isUint32Array: (v) => v instanceof Uint32Array,
+            isWeakMap: (v) => v instanceof WeakMap,
+            isWeakSet: (v) => v instanceof WeakSet,
+        })"#,
+        Some("[node:util/types]"),
+    )
+    .unwrap()
+}
+
 const POLYFILL: &str = r#"
 (() => {
   const util = {};

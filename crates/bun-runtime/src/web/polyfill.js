@@ -414,4 +414,106 @@
   g.AbortController = AbortController;
   g.AbortSignal = AbortSignal;
 
+  // ── Blob ───────────────────────────────────────────────────────────
+  if (typeof g.Blob === "undefined") {
+    class Blob {
+      constructor(parts, opts) {
+        const chunks = [];
+        if (parts && parts[Symbol.iterator]) {
+          for (const p of parts) {
+            if (p instanceof Blob) chunks.push(p._bytes);
+            else if (p instanceof ArrayBuffer) chunks.push(new Uint8Array(p));
+            else if (ArrayBuffer.isView(p)) chunks.push(new Uint8Array(p.buffer, p.byteOffset, p.byteLength));
+            else if (typeof p === "string") chunks.push(new TextEncoder().encode(p));
+          }
+        }
+        let total = 0;
+        for (const c of chunks) total += c.byteLength;
+        const out = new Uint8Array(total);
+        let off = 0;
+        for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+        this._bytes = out;
+        this.size = total;
+        this.type = (opts && opts.type) ? String(opts.type).toLowerCase() : "";
+      }
+      slice(start, end, type) {
+        const b = new Blob([]);
+        b._bytes = this._bytes.slice(start, end);
+        b.size = b._bytes.byteLength;
+        b.type = type || "";
+        return b;
+      }
+      async text() { return new TextDecoder("utf-8").decode(this._bytes); }
+      async arrayBuffer() { return this._bytes.buffer.slice(this._bytes.byteOffset, this._bytes.byteOffset + this._bytes.byteLength); }
+      async bytes() { return new Uint8Array(this._bytes); }
+      stream() {
+        const data = this._bytes;
+        return new ReadableStream({ start(c) { c.enqueue(data); c.close(); } });
+      }
+    }
+    g.Blob = Blob;
+  }
+  if (typeof g.File === "undefined") {
+    class File extends g.Blob {
+      constructor(parts, name, opts) {
+        super(parts, opts);
+        this.name = String(name || "");
+        this.lastModified = (opts && opts.lastModified) || Date.now();
+      }
+    }
+    g.File = File;
+  }
+
+  // ── FormData ───────────────────────────────────────────────────────
+  if (typeof g.FormData === "undefined") {
+    class FormData {
+      constructor() { this._entries = []; }
+      append(name, value, _filename) {
+        this._entries.push([String(name), value]);
+      }
+      set(name, value, _filename) { this.delete(name); this.append(name, value); }
+      get(name) { const e = this._entries.find(e => e[0] === name); return e ? e[1] : null; }
+      getAll(name) { return this._entries.filter(e => e[0] === name).map(e => e[1]); }
+      has(name) { return this._entries.some(e => e[0] === name); }
+      delete(name) { this._entries = this._entries.filter(e => e[0] !== name); }
+      *entries() { for (const e of this._entries) yield [e[0], e[1]]; }
+      *keys() { for (const e of this._entries) yield e[0]; }
+      *values() { for (const e of this._entries) yield e[1]; }
+      forEach(cb, thisArg) { for (const e of this._entries) cb.call(thisArg, e[1], e[0], this); }
+      [Symbol.iterator]() { return this.entries(); }
+    }
+    g.FormData = FormData;
+  }
+
+  // ── performance ────────────────────────────────────────────────────
+  if (typeof g.performance === "undefined") {
+    const startMs = Date.now();
+    const startHr = (typeof process !== "undefined" && process && process.hrtime) ? process.hrtime() : null;
+    g.performance = {
+      timeOrigin: startMs,
+      now() {
+        if (startHr && typeof process !== "undefined" && process.hrtime) {
+          const d = process.hrtime(startHr);
+          return d[0] * 1000 + d[1] / 1e6;
+        }
+        return Date.now() - startMs;
+      },
+      mark() {}, measure() {}, clearMarks() {}, clearMeasures() {},
+      getEntries() { return []; }, getEntriesByName() { return []; }, getEntriesByType() { return []; },
+      toJSON() { return { timeOrigin: this.timeOrigin }; },
+    };
+  }
+  if (typeof g.PerformanceObserver === "undefined") {
+    g.PerformanceObserver = class { constructor(){}; observe(){}; disconnect(){}; takeRecords(){return [];} };
+  }
+
+  if (typeof g.reportError === "undefined") {
+    g.reportError = (err) => { console.error(err); };
+  }
+  if (typeof g.structuredClone === "undefined") {
+    g.structuredClone = function (v) {
+      try { return JSON.parse(JSON.stringify(v)); } catch { return v; }
+    };
+  }
+
 })(globalThis);

@@ -211,15 +211,46 @@ const GLOBALS: &str = r#"
     });
     try { body(); } finally { stack.pop(); }
   };
+  // Variants Bun's tests use heavily:
+  g.describe.skip = (name, body) => {
+    // Push a describe-level skip: all nested tests become skipped.
+    const top = curr();
+    stack.push({
+      path: [...top.path, name],
+      beforeAll: [...top.beforeAll],
+      afterAll: [...top.afterAll],
+      beforeEach: [...top.beforeEach],
+      afterEach: [...top.afterEach],
+      forceSkip: true,
+    });
+    try { body(); } finally { stack.pop(); }
+  };
+  g.describe.only = g.describe;            // Treat .only as normal
+  g.describe.todo = (name) => {};          // Skip the body entirely.
+  g.describe.skipIf = (cond) => (cond ? g.describe.skip : g.describe);
+  g.describe.todoIf = (cond) => (cond ? g.describe.todo : g.describe);
+  g.describe.if = (cond) => (cond ? g.describe : g.describe.skip);
+  g.describe.each = (rows) => (name, body) => {
+    for (const row of rows) {
+      const args = Array.isArray(row) ? row : [row];
+      g.describe(name + " [" + safeStringify(args) + "]", () => body(...args));
+    }
+  };
+
+  function safeStringify(v) {
+    try { return JSON.stringify(v); } catch { return String(v); }
+  }
 
   function pushTest(name, fn, opts) {
     const c = curr();
+    const skip = !!(opts && opts.skip) || !!c.forceSkip;
     g.__bun_test_collector.push({
       name, fn,
       path: c.path,
       beforeEach: [...c.beforeEach],
       afterEach: [...c.afterEach],
-      skip: !!(opts && opts.skip),
+      skip,
+      failing: !!(opts && opts.failing),
     });
   }
 
@@ -227,14 +258,25 @@ const GLOBALS: &str = r#"
   g.it = g.test;
   g.test.skip = (name) => pushTest(name, () => {}, { skip: true });
   g.it.skip = g.test.skip;
-  g.test.todo = (name) => pushTest(name, () => {}, { skip: true });
+  g.test.todo = (name, fn) => pushTest(name, fn || (() => {}), { skip: true });
   g.it.todo = g.test.todo;
   g.test.only = (name, fn) => pushTest(name, fn);
   g.it.only = g.test.only;
+  // .failing: test is expected to fail; inverted exit code.
+  g.test.failing = (name, fn) => pushTest(name, fn, { failing: true });
+  g.it.failing = g.test.failing;
+  // .skipIf(cond)(name, fn) — skip when cond is truthy.
+  g.test.skipIf = (cond) => (cond ? g.test.skip : g.test);
+  g.it.skipIf = g.test.skipIf;
+  g.test.todoIf = (cond) => (cond ? g.test.todo : g.test);
+  g.it.todoIf = g.test.todoIf;
+  // .if(cond) — run only if cond is truthy.
+  g.test.if = (cond) => (cond ? g.test : g.test.skip);
+  g.it.if = g.test.if;
   g.test.each = (rows) => (name, fn) => {
     for (const row of rows) {
       const args = Array.isArray(row) ? row : [row];
-      pushTest(name + " [" + JSON.stringify(args) + "]", () => fn(...args));
+      pushTest(name + " [" + safeStringify(args) + "]", () => fn(...args));
     }
   };
   g.it.each = g.test.each;
@@ -323,6 +365,72 @@ const GLOBALS: &str = r#"
         }
         if (arguments.length >= 2) check(deepEq(v, value), value, "toHaveProperty");
         else check(true, key, "toHaveProperty");
+      },
+      // Bun-specific matchers (also in jest-extended).
+      toBeTrue()  { check(received === true, undefined, "toBeTrue"); },
+      toBeFalse() { check(received === false, undefined, "toBeFalse"); },
+      toBeBoolean() { check(typeof received === "boolean", undefined, "toBeBoolean"); },
+      toBeString() { check(typeof received === "string", undefined, "toBeString"); },
+      toBeNumber() { check(typeof received === "number" && !isNaN(received), undefined, "toBeNumber"); },
+      toBeFinite() { check(Number.isFinite(received), undefined, "toBeFinite"); },
+      toBeInteger() { check(Number.isInteger(received), undefined, "toBeInteger"); },
+      toBePositive() { check(typeof received === "number" && received > 0, undefined, "toBePositive"); },
+      toBeNegative() { check(typeof received === "number" && received < 0, undefined, "toBeNegative"); },
+      toBeOdd() { check(Number.isInteger(received) && received % 2 !== 0, undefined, "toBeOdd"); },
+      toBeEven() { check(Number.isInteger(received) && received % 2 === 0, undefined, "toBeEven"); },
+      toBeFunction() { check(typeof received === "function", undefined, "toBeFunction"); },
+      toBeObject() { check(received !== null && typeof received === "object", undefined, "toBeObject"); },
+      toBeArray() { check(Array.isArray(received), undefined, "toBeArray"); },
+      toBeArrayOfSize(n) { check(Array.isArray(received) && received.length === n, n, "toBeArrayOfSize"); },
+      toBeEmpty() {
+        const empty = received == null
+          || (typeof received === "string" && received.length === 0)
+          || (Array.isArray(received) && received.length === 0)
+          || (received && typeof received === "object" && Object.keys(received).length === 0);
+        check(empty, undefined, "toBeEmpty");
+      },
+      toBeEmptyObject() {
+        check(received && typeof received === "object" && Object.keys(received).length === 0, undefined, "toBeEmptyObject");
+      },
+      toContainEqual(v) {
+        const found = Array.isArray(received) && received.some((x) => deepEq(x, v));
+        check(found, v, "toContainEqual");
+      },
+      toContainAllValues(arr) {
+        if (!received || typeof received !== "object") { check(false, arr, "toContainAllValues"); return; }
+        const values = Array.isArray(received) ? received : Object.values(received);
+        check(arr.every((v) => values.some((x) => deepEq(x, v))), arr, "toContainAllValues");
+      },
+      toStartWith(s) { check(typeof received === "string" && received.startsWith(s), s, "toStartWith"); },
+      toEndWith(s) { check(typeof received === "string" && received.endsWith(s), s, "toEndWith"); },
+      toIncludeRepeated(sub, count) {
+        if (typeof received !== "string") { check(false, sub, "toIncludeRepeated"); return; }
+        let n = 0, i = 0;
+        while ((i = received.indexOf(sub, i)) !== -1) { n++; i++; }
+        check(n === count, sub, "toIncludeRepeated");
+      },
+      toEqualIgnoringWhitespace(s) {
+        const norm = (x) => String(x).replace(/\s+/g, " ").trim();
+        check(norm(received) === norm(s), s, "toEqualIgnoringWhitespace");
+      },
+      toMatchObject(partial) {
+        function matches(rec, part) {
+          if (part === null || typeof part !== "object") return deepEq(rec, part);
+          if (rec === null || typeof rec !== "object") return false;
+          if (Array.isArray(part)) {
+            if (!Array.isArray(rec)) return false;
+            if (rec.length < part.length) return false;
+            return part.every((v, i) => matches(rec[i], v));
+          }
+          return Object.keys(part).every((k) => matches(rec[k], part[k]));
+        }
+        check(matches(received, partial), partial, "toMatchObject");
+      },
+      toBeOneOf(arr) {
+        check(arr.some((x) => deepEq(received, x)), arr, "toBeOneOf");
+      },
+      toBeWithin(min, max) {
+        check(typeof received === "number" && received >= min && received < max, [min, max], "toBeWithin");
       },
     };
     obj.resolves = {

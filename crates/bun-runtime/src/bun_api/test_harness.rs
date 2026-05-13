@@ -84,10 +84,15 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
             // Misc
             gc: () => {{}},
+            gcTick: async () => {{ await new Promise(r => setTimeout(r, 0)); }},
+            Bun: globalThis.Bun,
             randomPort: () => 30000 + Math.floor(Math.random() * 30000),
             expectMaxObjectTypeCount: () => {{}},
             normalizeBunSnapshot: (s) => String(s),
             exampleSite: "https://example.com",
+            disableAggressiveGCScope: () => {{ return {{ [Symbol.dispose]() {{}} }}; }},
+            describeOSVersion: () => "{plat}",
+            isExecutable: (_p) => {{ try {{ require("node:fs").accessSync(_p, 1); return true; }} catch {{ return false; }} }},
             bunRun: () => {{ throw new Error("bunRun not implemented in bun-rs harness shim"); }},
             bunRunAsScript: () => {{ throw new Error("bunRunAsScript not implemented"); }},
             runBunInstall: () => {{ throw new Error("runBunInstall not implemented"); }},
