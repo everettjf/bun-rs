@@ -416,6 +416,38 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
     let env_v = ctx.eval("({...process.env})", Some("[import.meta.env]"))
         .unwrap_or_else(|_| Value::new_undefined(ctx));
     obj.set_property("env", &env_v).ok();
+    // resolveSync(spec, from?) — best-effort: append spec to dirname, or
+    // pass through for absolute / bare-name specs.
+    let import_dir = dirname.clone();
+    let import_filename = filename.clone();
+    let resolve_sync = Callback::new(ctx, "resolveSync", move |args| {
+        let spec = args.get(0).to_string();
+        if spec.starts_with('/') || spec.starts_with("file://") {
+            return Ok(Value::new_string(args.context(), &spec));
+        }
+        if spec.starts_with("./") || spec.starts_with("../") {
+            let joined = std::path::Path::new(&import_dir).join(&spec);
+            let canon = joined.canonicalize().unwrap_or(joined);
+            return Ok(Value::new_string(args.context(), &canon.to_string_lossy()));
+        }
+        Ok(Value::new_string(args.context(), &spec))
+    });
+    obj.set_property("resolveSync", &resolve_sync.value_in(ctx)).ok();
+    std::mem::forget(resolve_sync);
+    // resolve(spec, from?) - async version: return a resolved Promise of the path.
+    let _ = ctx.eval(
+        &format!(
+            r#"
+            ((m) => {{
+                m.resolve = async function(spec, _from) {{ return m.resolveSync(spec); }};
+                m.require = globalThis.require;
+                m.path = {:?};
+            }})
+            "#,
+            filename
+        ),
+        Some("[import.meta.resolve]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[obj.as_value()])));
     obj.as_value()
 }
 

@@ -1994,7 +1994,7 @@ fn build_jsc_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 // `is not a function` or `is undefined`. Tests that actually depend on
 // the internal semantics will still fail, but at least the file loads.
 fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
-    ctx.eval(
+    let v = ctx.eval(
         r#"({
             __esModule: true,
             crash_handler: { getMachOUUID: () => null, panic: () => {} },
@@ -2025,10 +2025,34 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             cssParse: (s) => ({ raw: String(s) }),
             cssLineCol: (_s, _i) => [1, 1],
             nodeFsExtensions: {},
+            escapeRegExp: (s) => {
+                let out = "";
+                for (const c of String(s)) {
+                    if (c === "-") out += "\\x2d";
+                    else if ("\\^$*+?.()|{}[]".indexOf(c) >= 0) out += "\\" + c;
+                    else out += c;
+                }
+                return out;
+            },
+            escapeRegExpForPackageNameMatching: (s) => {
+                let out = "";
+                for (const c of String(s)) {
+                    if (c === "-") out += "\\x2d";
+                    else if (c === "*") out += ".*";
+                    else if ("\\^$+?.()|{}[]".indexOf(c) >= 0) out += "\\" + c;
+                    else out += c;
+                }
+                return out;
+            },
         })"#,
         Some("[bun:internal-for-testing]"),
     )
-    .expect("build bun:internal-for-testing stub")
+    .expect("build bun:internal-for-testing stub");
+    // Add default = self so `import testHelpers from "bun:internal-for-testing"` works.
+    if let Ok(o) = v.to_object() {
+        let _ = o.set_property("default", &v);
+    }
+    v
 }
 
 /// Resolve a bare `"bun"` import — returns the same object as `globalThis.Bun`
