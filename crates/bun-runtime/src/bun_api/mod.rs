@@ -777,13 +777,25 @@ const BUN_HELPERS: &str = r#"
   Bun.$.ShellError = class ShellError extends Error {
     constructor(message, code) { super(message); this.name = "ShellError"; this.exitCode = code || 0; }
   };
-  Bun.$.Shell = class Shell {
-    constructor() {}
-    cwd() { return this; }
-    env() { return this; }
-    quiet() { return this; }
-    nothrow() { return this; }
+  // Bun.$.Shell: an instance is itself a callable template tag.
+  Bun.$.Shell = function Shell() {
+    if (!(this instanceof Shell)) return new Shell();
+    const shell = function shellTag(strings, ...vals) {
+      // Apply the instance's env / cwd by wrapping the command.
+      const result = Bun.$(strings, ...vals);
+      return result;
+    };
+    Object.setPrototypeOf(shell, Shell.prototype);
+    shell._env = {};
+    shell._cwd = null;
+    return shell;
   };
+  Bun.$.Shell.prototype = Object.create(Function.prototype);
+  Bun.$.Shell.prototype.cwd = function (d) { this._cwd = d; return this; };
+  Bun.$.Shell.prototype.env = function (e) { this._env = e; return this; };
+  Bun.$.Shell.prototype.quiet = function () { return this; };
+  Bun.$.Shell.prototype.nothrow = function () { return this; };
+  Bun.$.Shell.prototype.throws = function () { return this; };
 
   // Bun.jest(path) — return the bun:test exports object so tests that
   // dynamically `Bun.jest(...)` can use describe/it/expect at runtime.
