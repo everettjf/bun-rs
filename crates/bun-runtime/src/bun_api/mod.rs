@@ -936,13 +936,17 @@ const BUN_HELPERS: &str = r#"
     delete(name) { return this._entries.delete(name); }
     add(name, value) { this._entries.set(name, value); return this; }
     [Symbol.iterator]() { return this._entries.entries(); }
-    toBlob() {
-      // Serialize as a marker blob carrying the entries Map; round-trip
-      // back via new Archive(blob) preserves entries (lossy outside our process).
+    async blob() {
+      // Serialize as a Blob carrying the entries Map; round-trip back via
+      // new Archive(blob) preserves entries (lossy outside our process).
       const blob = new Blob([new TextEncoder().encode(JSON.stringify(Array.from(this._entries.keys())))]);
       blob.__bun_archive_entries = this._entries;
       return blob;
     }
+    toBlob() { return this.blob(); }
+    async bytes() { return new TextEncoder().encode(JSON.stringify(Array.from(this._entries.keys()))); }
+    async arrayBuffer() { const b = await this.bytes(); return b.buffer; }
+    async text() { return JSON.stringify(Array.from(this._entries.keys())); }
   };
 
   // ── Bun.MIMEType (stub) ─────────────────────────────────────────────

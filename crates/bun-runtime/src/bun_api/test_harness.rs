@@ -104,6 +104,21 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             cwd: () => process.cwd(),
             nodeExePath: () => "/usr/bin/env node",
             packageDirectoryRecursive: (_p) => null,
+            cwdScope: (dir) => {{
+                const prev = process.cwd();
+                process.chdir(dir);
+                return {{ [Symbol.dispose]() {{ process.chdir(prev); }} }};
+            }},
+            assertManyTabReturns: () => {{}},
+            tls: {{ cert: "", key: "" }},
+            invalidTlsAlt: {{}},
+            mockFetch: () => {{}},
+            tlsOptions: {{}},
+            CHILD_SUITE: "",
+            HasOnlyBuiltins: false,
+            getMaxFD2: () => 65536,
+            isOpen: false,
+            tempJestSetup: () => {{}},
             Bun: globalThis.Bun,
             randomPort: () => 30000 + Math.floor(Math.random() * 30000),
             expectMaxObjectTypeCount: () => {{}},

@@ -44,6 +44,56 @@ fn build_console<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         std::mem::forget(cb);
     }
 
+    // console.time / .timeEnd / .timeLog — timestamped labeled timers.
+    // Stored in a JS Map on console itself so multiple labels are tracked.
+    let _ = ctx.eval(
+        r#"
+        (function (c) {
+            const timers = new Map();
+            c.time = function (label) {
+                timers.set(label || "default", performance.now());
+            };
+            c.timeEnd = function (label) {
+                const k = label || "default";
+                const t0 = timers.get(k);
+                if (t0 === undefined) { console.warn("No such label: " + k); return; }
+                const dt = performance.now() - t0;
+                timers.delete(k);
+                console.log(k + ": " + dt.toFixed(3) + "ms");
+            };
+            c.timeLog = function (label, ...rest) {
+                const k = label || "default";
+                const t0 = timers.get(k);
+                if (t0 === undefined) { console.warn("No such label: " + k); return; }
+                const dt = performance.now() - t0;
+                console.log(k + ": " + dt.toFixed(3) + "ms", ...rest);
+            };
+            c.count = (function () {
+                const counts = new Map();
+                return function (label) {
+                    const k = label || "default";
+                    const n = (counts.get(k) || 0) + 1;
+                    counts.set(k, n);
+                    console.log(k + ": " + n);
+                };
+            })();
+            c.countReset = function (label) { /* no-op */ };
+            c.group = function (...args) { console.log(...args); };
+            c.groupCollapsed = c.group;
+            c.groupEnd = function () {};
+            c.assert = function (cond, ...args) {
+                if (!cond) console.error("Assertion failed:", ...args);
+            };
+            c.table = function (data) { console.log(data); };
+            c.profile = function () {};
+            c.profileEnd = function () {};
+            c.timeStamp = function () {};
+            c.clear = function () {};
+        })(globalThis.console);
+        "#,
+        Some("[console-extra]"),
+    );
+
     obj.as_value()
 }
 

@@ -648,6 +648,52 @@
   }
   if (typeof g.frames === "undefined") g.frames = g;
 
+  // ── crypto (Web Crypto API global) ─────────────────────────────────
+  // Bun's tests expect a `crypto` global with .randomUUID(),
+  // .getRandomValues(), and .subtle. Node has it; tests do `crypto.xxx`.
+  if (typeof g.crypto === "undefined") {
+    g.crypto = {
+      randomUUID() {
+        const b = new Uint8Array(16);
+        for (let i = 0; i < 16; i++) b[i] = (Math.random() * 256) & 0xff;
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        const h = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+        return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) + "-" + h.slice(16, 20) + "-" + h.slice(20, 32);
+      },
+      getRandomValues(arr) {
+        if (!ArrayBuffer.isView(arr)) throw new TypeError("getRandomValues requires a TypedArray");
+        const v = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+        for (let i = 0; i < v.length; i++) v[i] = (Math.random() * 256) & 0xff;
+        return arr;
+      },
+      subtle: {
+        // Real WebCrypto algorithms need real crypto; pass through to
+        // node:crypto when possible.
+        async digest(algo, data) {
+          const c = require("node:crypto");
+          const name = (typeof algo === "string" ? algo : algo.name).toLowerCase().replace("sha-", "sha");
+          const buf = ArrayBuffer.isView(data)
+            ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+            : new Uint8Array(data);
+          const h = c.createHash(name).update(buf).digest();
+          return new Uint8Array(h).buffer;
+        },
+        async importKey() { throw new Error("subtle.importKey not implemented"); },
+        async exportKey() { throw new Error("subtle.exportKey not implemented"); },
+        async encrypt() { throw new Error("subtle.encrypt not implemented"); },
+        async decrypt() { throw new Error("subtle.decrypt not implemented"); },
+        async sign() { throw new Error("subtle.sign not implemented"); },
+        async verify() { throw new Error("subtle.verify not implemented"); },
+        async generateKey() { throw new Error("subtle.generateKey not implemented"); },
+        async deriveBits() { throw new Error("subtle.deriveBits not implemented"); },
+        async deriveKey() { throw new Error("subtle.deriveKey not implemented"); },
+        async wrapKey() { throw new Error("subtle.wrapKey not implemented"); },
+        async unwrapKey() { throw new Error("subtle.unwrapKey not implemented"); },
+      },
+    };
+  }
+
   // ── HTMLRewriter (stub) — Bun-specific streaming HTML transformer ──
   if (typeof g.HTMLRewriter === "undefined") {
     class HTMLRewriter {
