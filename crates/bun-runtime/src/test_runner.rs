@@ -436,7 +436,10 @@ const GLOBALS: &str = r#"
   g.test.only = (name, fn) => pushTest(name, fn);
   g.it.only = g.test.only;
   // .failing: test is expected to fail; inverted exit code.
-  g.test.failing = (name, fn) => pushTest(name, fn, { failing: true });
+  g.test.failing = (name, fn) => {
+    if (typeof fn !== "function") throw new Error("test.failing expects a function as the second argument");
+    return pushTest(name, fn, { failing: true });
+  };
   g.it.failing = g.test.failing;
   // .skipIf(cond)(name, fn) — skip when cond is truthy.
   g.test.skipIf = (cond) => (cond ? g.test.skip : g.test);

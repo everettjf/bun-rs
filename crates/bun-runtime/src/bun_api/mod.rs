@@ -1581,8 +1581,10 @@ const BUN_HELPERS: &str = r##"
     return obj;
   };
   Bun.$.escape = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
-  Bun.$.cwd = (_d) => Bun.$;
-  Bun.$.env = (_e) => Bun.$;
+  // $.cwd(dir) returns a fresh shell-tag function bound to that cwd.
+  // Chainable: $.cwd(d).env(e)`cmd`.
+  Bun.$.cwd = (d) => Bun.$.__withOptions({ cwd: d, env: null });
+  Bun.$.env = (e) => Bun.$.__withOptions({ cwd: null, env: e });
   Bun.$.nothrow = () => Bun.$;
   Bun.$.quiet = () => Bun.$;
   Bun.$.throws = (_b) => Bun.$;
@@ -1608,7 +1610,7 @@ const BUN_HELPERS: &str = r##"
     return shell;
   };
   Bun.$.__withOptions = function (opts) {
-    return function (strings, ...values) {
+    const tag = function (strings, ...values) {
       const cp = require("node:child_process");
       let cmd = "";
       if (Array.isArray(strings)) {
@@ -1621,9 +1623,14 @@ const BUN_HELPERS: &str = r##"
       if (opts.cwd) spawnOpts.cwd = String(opts.cwd);
       if (opts.env) spawnOpts.env = { ...process.env, ...opts.env };
       const r = cp.spawnSync("sh", ["-c", cmd], spawnOpts);
-      // Reuse the result shape from Bun.$ above.
       return Bun.$.__wrapShellResult(r);
     };
+    tag.cwd = (d) => Bun.$.__withOptions({ ...opts, cwd: d });
+    tag.env = (e) => Bun.$.__withOptions({ ...opts, env: e });
+    tag.nothrow = () => tag;
+    tag.quiet = () => tag;
+    tag.throws = (_b) => tag;
+    return tag;
   };
   Bun.$.__wrapShellResult = function (r) {
     const obj = {
