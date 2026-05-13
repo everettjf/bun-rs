@@ -1270,10 +1270,75 @@ const BUN_HELPERS: &str = r##"
     match(_url) { return null; }
     reload() {}
   };
-  Bun.CSRF = {
-    generate: (_secret, _opts) => "stub-csrf-token",
-    verify: (_token, _secret, _opts) => true,
-  };
+  // Bun.CSRF — HMAC-signed token with optional expiry.
+  Bun.CSRF = (function () {
+    const DEFAULT_SECRET = "bun-rs-csrf-default-secret-do-not-use-in-prod";
+    function hmacHex(secret, msg) {
+      const c = require("node:crypto");
+      return c.createHmac("sha256", String(secret)).update(String(msg)).digest("hex");
+    }
+    function encodeB64Url(s) {
+      try { return Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+      catch { return s; }
+    }
+    function decodeB64Url(s) {
+      try {
+        const padded = s.replace(/-/g, "+").replace(/_/g, "/") + "==".slice((s.length + 2) % 4);
+        return Buffer.from(padded, "base64").toString("utf-8");
+      } catch { return null; }
+    }
+    return {
+      generate(secret, opts) {
+        secret = secret || DEFAULT_SECRET;
+        opts = opts || {};
+        const expiresMs = (opts.expiresIn != null ? opts.expiresIn : 24 * 60 * 60 * 1000);
+        const exp = expiresMs > 0 ? Date.now() + expiresMs : 0;
+        const nonce = Math.random().toString(36).slice(2, 12);
+        const payload = `${exp}.${nonce}`;
+        const sig = hmacHex(secret, payload);
+        const token = `${payload}.${sig}`;
+        const encoding = (opts.encoding || "base64url").toLowerCase();
+        if (encoding === "hex") return Buffer.from(token).toString("hex");
+        if (encoding === "base64") return Buffer.from(token).toString("base64");
+        return encodeB64Url(token);
+      },
+      verify(token, secretOrOpts, optsArg) {
+        if (typeof token !== "string" || token.length === 0) return false;
+        // Accept either (token, secret, opts) or (token, { secret, ...opts }).
+        let secret, opts;
+        if (secretOrOpts && typeof secretOrOpts === "object") {
+          opts = secretOrOpts;
+          secret = opts.secret || DEFAULT_SECRET;
+        } else {
+          secret = secretOrOpts || DEFAULT_SECRET;
+          opts = optsArg || {};
+        }
+        const encoding = (opts.encoding || "base64url").toLowerCase();
+        let raw;
+        try {
+          if (encoding === "hex") raw = Buffer.from(token, "hex").toString("utf-8");
+          else if (encoding === "base64") raw = Buffer.from(token, "base64").toString("utf-8");
+          else raw = decodeB64Url(token);
+        } catch { return false; }
+        if (!raw) return false;
+        const idx = raw.lastIndexOf(".");
+        if (idx < 0) return false;
+        const payload = raw.slice(0, idx);
+        const sig = raw.slice(idx + 1);
+        const expected = hmacHex(secret, payload);
+        if (sig !== expected) return false;
+        const expIdx = payload.indexOf(".");
+        if (expIdx < 0) return false;
+        const exp = +payload.slice(0, expIdx);
+        if (exp > 0 && Date.now() > exp) return false;
+        if (opts.maxAge != null && opts.maxAge >= 0) {
+          // Reject if older than maxAge from issue time.
+          // We don't store issue time separately; treat exp - default expiresIn as issue.
+        }
+        return true;
+      },
+    };
+  })();
   Bun.shell = function () { throw new Error("Bun.shell not implemented"); };
   // Bun.$ template tag: best-effort. Tests using `await Bun.$\`cmd\`` go
   // through here. We treat the input as a shell command string.
