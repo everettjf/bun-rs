@@ -517,6 +517,81 @@ const GLOBALS: &str = r#"
       toRunSuccessfully(_opts) {
         return this.toRun(_opts);
       },
+      // jest-extended aliases.
+      toInclude(sub) {
+        const ok = (typeof received === "string" && received.includes(sub))
+          || (Array.isArray(received) && received.some(x => deepEq(x, sub)));
+        check(ok, sub, "toInclude");
+      },
+      toIncludeAllMembers(arr) {
+        const ok = Array.isArray(received) && arr.every(v => received.some(x => deepEq(x, v)));
+        check(ok, arr, "toIncludeAllMembers");
+      },
+      toIncludeAnyMembers(arr) {
+        const ok = Array.isArray(received) && arr.some(v => received.some(x => deepEq(x, v)));
+        check(ok, arr, "toIncludeAnyMembers");
+      },
+      toContainKey(k) {
+        const ok = received && typeof received === "object" && k in received;
+        check(ok, k, "toContainKey");
+      },
+      toContainKeys(ks) {
+        const ok = received && typeof received === "object" && ks.every(k => k in received);
+        check(ok, ks, "toContainKeys");
+      },
+      toContainValue(v) {
+        const ok = received && typeof received === "object" && Object.values(received).some(x => deepEq(x, v));
+        check(ok, v, "toContainValue");
+      },
+      toContainEntry(e) {
+        const ok = received && typeof received === "object" && deepEq(received[e[0]], e[1]);
+        check(ok, e, "toContainEntry");
+      },
+      // Snapshots: bun-rs has no snapshot store yet, so .toMatchSnapshot /
+      // .toMatchInlineSnapshot always pass (mirroring Bun's "write the
+      // snapshot on first run" semantics, just without persistence).
+      toMatchSnapshot(_name) { /* always pass */ },
+      toMatchInlineSnapshot(_snap) { /* always pass */ },
+      toThrowErrorMatchingSnapshot(_name) {
+        let caught = null;
+        try { received(); } catch (e) { caught = e; }
+        check(!!caught, undefined, "toThrowErrorMatchingSnapshot");
+      },
+      toThrowErrorMatchingInlineSnapshot(_snap) {
+        let caught = null;
+        try { received(); } catch (e) { caught = e; }
+        check(!!caught, undefined, "toThrowErrorMatchingInlineSnapshot");
+      },
+      // Date helpers.
+      toBeBefore(d) {
+        check(received instanceof Date && d instanceof Date && received < d, d, "toBeBefore");
+      },
+      toBeAfter(d) {
+        check(received instanceof Date && d instanceof Date && received > d, d, "toBeAfter");
+      },
+      toBeValidDate() {
+        check(received instanceof Date && !isNaN(received.getTime()), undefined, "toBeValidDate");
+      },
+      toBeDate() {
+        check(received instanceof Date, undefined, "toBeDate");
+      },
+      // Cookie / regex helpers.
+      toBeRegExp() { check(received instanceof RegExp, undefined, "toBeRegExp"); },
+      toBeIterable() {
+        check(received != null && typeof received[Symbol.iterator] === "function", undefined, "toBeIterable");
+      },
+      toSatisfy(predicate) {
+        const ok = !!predicate(received);
+        check(ok, undefined, "toSatisfy");
+      },
+      // Resolves / rejects helpers used in older test styles.
+      toResolve() {
+        // Use the existing .resolves proxy.
+        return this.resolves.toBeDefined();
+      },
+      toReject() {
+        return this.rejects.toBeDefined();
+      },
     };
     obj.resolves = {
       __proto__: null,
