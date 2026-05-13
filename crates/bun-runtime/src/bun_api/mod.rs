@@ -1540,10 +1540,10 @@ const BUN_HELPERS: &str = r##"
       stderr: r.stderr || new Uint8Array(0),
       stdoutText: (r.stdout || new Uint8Array(0)).toString(),
       stderrText: (r.stderr || new Uint8Array(0)).toString(),
-      async text() { return new TextDecoder().decode(this.stdout); },
-      async json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
-      async bytes() { return this.stdout; },
-      async arrayBuffer() { return this.stdout.buffer.slice(0); },
+      text() { return new TextDecoder().decode(this.stdout); },
+      json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
+      bytes() { return this.stdout; },
+      arrayBuffer() { return this.stdout.buffer.slice(0); },
       lines() {
         const text = new TextDecoder().decode(this.stdout);
         const parts = text.split("\n");
@@ -1558,7 +1558,7 @@ const BUN_HELPERS: &str = r##"
           },
         };
       },
-      async blob() { return new Blob([this.stdout]); },
+      blob() { return new Blob([this.stdout]); },
       // IMPORTANT: must pass onFulfilled a NON-thenable view, otherwise
       // `await obj` -> obj.then(resolve) -> resolve(obj) -> the runtime
       // sees resolve called with a thenable and calls obj.then again ->
@@ -1572,6 +1572,7 @@ const BUN_HELPERS: &str = r##"
           stderrText: this.stderrText,
           text: this.text.bind(this),
           json: this.json.bind(this),
+          blob: this.blob.bind(this),
           bytes: this.bytes.bind(this),
           arrayBuffer: this.arrayBuffer.bind(this),
           lines: this.lines.bind(this),
@@ -1657,10 +1658,10 @@ const BUN_HELPERS: &str = r##"
       stderr: r.stderr || new Uint8Array(0),
       stdoutText: (r.stdout || new Uint8Array(0)).toString(),
       stderrText: (r.stderr || new Uint8Array(0)).toString(),
-      async text() { return new TextDecoder().decode(this.stdout); },
-      async json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
-      async bytes() { return this.stdout; },
-      async arrayBuffer() { return this.stdout.buffer.slice(0); },
+      text() { return new TextDecoder().decode(this.stdout); },
+      json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
+      bytes() { return this.stdout; },
+      arrayBuffer() { return this.stdout.buffer.slice(0); },
       lines() {
         const text = new TextDecoder().decode(this.stdout);
         const parts = text.split("\n");
@@ -1675,12 +1676,12 @@ const BUN_HELPERS: &str = r##"
           },
         };
       },
-      async blob() { return new Blob([this.stdout]); },
+      blob() { return new Blob([this.stdout]); },
       then(onFulfilled, onRejected) {
         const plain = {
           exitCode: this.exitCode, stdout: this.stdout, stderr: this.stderr,
           stdoutText: this.stdoutText, stderrText: this.stderrText,
-          text: this.text.bind(this), json: this.json.bind(this),
+          text: this.text.bind(this), json: this.json.bind(this), blob: this.blob.bind(this),
           bytes: this.bytes.bind(this), arrayBuffer: this.arrayBuffer.bind(this),
           lines: this.lines.bind(this), quiet: this.quiet.bind(this), nothrow: this.nothrow.bind(this),
         };
