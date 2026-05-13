@@ -206,20 +206,27 @@ fn build_string_decoder<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
 fn build_module_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     ctx.eval(
-        r#"({
-            __esModule: true,
-            createRequire: (_filename) => globalThis.require,
-            _cache: {},
-            _resolveFilename: (request) => request,
-            Module: function(){},
-            builtinModules: [
-                "assert","buffer","child_process","crypto","dgram","dns","events",
-                "fs","http","https","net","os","path","querystring","readline",
-                "stream","string_decoder","timers","tls","tty","url","util",
-                "v8","worker_threads","zlib"
-            ],
-            isBuiltin: (n) => /^node:/.test(n) || ["fs","path","os","crypto","util","events","stream","buffer","url","http","https","zlib","child_process","assert","querystring","readline","worker_threads","perf_hooks","process","timers","tty","net","constants","string_decoder","punycode","module","v8","dns","dgram"].includes(n),
-        })"#,
+        r#"(() => {
+            const m = {
+                __esModule: true,
+                createRequire: (_filename) => globalThis.require,
+                _cache: {},
+                _resolveFilename: (request) => request,
+                Module: function(){},
+                builtinModules: [
+                    "assert","buffer","child_process","crypto","dgram","dns","events",
+                    "fs","http","https","net","os","path","querystring","readline",
+                    "stream","string_decoder","timers","tls","tty","url","util",
+                    "v8","worker_threads","zlib"
+                ],
+                isBuiltin: (n) => /^node:/.test(n) || ["fs","path","os","crypto","util","events","stream","buffer","url","http","https","zlib","child_process","assert","querystring","readline","worker_threads","perf_hooks","process","timers","tty","net","constants","string_decoder","punycode","module","v8","dns","dgram"].includes(n),
+            };
+            // `import Module from "node:module"` should yield this namespace
+            // (Module.createRequire etc). With __esModule the rewriter
+            // unwraps .default, so make default self-refer.
+            m.default = m;
+            return m;
+        })()"#,
         Some("[node:module]"),
     )
     .unwrap()

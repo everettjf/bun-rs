@@ -39,9 +39,17 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 let returnValue = undefined;
                 const fn = function (...args) {
                     calls.push(args);
-                    if (returnValueSet) return returnValue;
-                    if (impl) return impl.apply(this, args);
-                    return undefined;
+                    try {
+                        let v;
+                        if (returnValueSet) v = returnValue;
+                        else if (impl) v = impl.apply(this, args);
+                        else v = undefined;
+                        results.push({ type: "return", value: v });
+                        return v;
+                    } catch (e) {
+                        results.push({ type: "throw", value: e });
+                        throw e;
+                    }
                 };
                 fn.mock = {
                     calls,

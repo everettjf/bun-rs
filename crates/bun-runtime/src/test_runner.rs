@@ -742,6 +742,33 @@ const GLOBALS: &str = r#"
         const results = (received && received.mock && received.mock.results) || [];
         check(results.filter(r => r.type === "return").length === n, n, "toHaveReturnedTimes");
       },
+      toHaveReturned() {
+        const results = (received && received.mock && received.mock.results) || [];
+        check(results.some(r => r.type === "return"), undefined, "toHaveReturned");
+      },
+      toHaveReturnedWith(v) {
+        const results = (received && received.mock && received.mock.results) || [];
+        const ok = results.some(r => r.type === "return" && deepEq(r.value, v));
+        check(ok, v, "toHaveReturnedWith");
+      },
+      toHaveLastReturnedWith(v) {
+        const results = (received && received.mock && received.mock.results) || [];
+        const last = results[results.length - 1];
+        const ok = last && last.type === "return" && deepEq(last.value, v);
+        check(ok, v, "toHaveLastReturnedWith");
+      },
+      toHaveNthReturnedWith(n, v) {
+        const results = (received && received.mock && received.mock.results) || [];
+        const r = results[n - 1];
+        const ok = r && r.type === "return" && deepEq(r.value, v);
+        check(ok, v, "toHaveNthReturnedWith");
+      },
+      toHaveBeenNthCalledWith(n, ...args) {
+        const calls = (received && received.mock && received.mock.calls) || [];
+        const c = calls[n - 1] || [];
+        const ok = c.length === args.length && c.every((v, i) => deepEq(v, args[i]));
+        check(ok, args, "toHaveBeenNthCalledWith");
+      },
       fail(msg) { throw new Error(msg || "expect().fail() called"); },
       pass(_msg) { /* always passes */ },
       toMatchFileSnapshot(_file) {},
@@ -796,6 +823,22 @@ const GLOBALS: &str = r#"
         });
       },
     });
+    // Mix in custom matchers registered via expect.extend(). Each runs the
+    // user-provided fn(received, ...args) → { pass, message } and throws
+    // when pass===false (or pass===true with .not).
+    if (g.__bun_custom_matchers) {
+      for (const [name, fn] of Object.entries(g.__bun_custom_matchers)) {
+        if (obj[name] !== undefined) continue;
+        obj[name] = function (...args) {
+          const r = fn(received, ...args);
+          const pass = !!(r && r.pass);
+          if (not ? pass : !pass) {
+            const msg = (r && typeof r.message === "function") ? r.message() : String(r && r.message || `${name} matcher failed`);
+            throw new Error(msg);
+          }
+        };
+      }
+    }
     return obj;
   }
 
@@ -909,8 +952,11 @@ const GLOBALS: &str = r#"
     });
     return make();
   };
+  g.__bun_custom_matchers = g.__bun_custom_matchers || {};
   g.expect.extend = function (matchers) {
     for (const [name, fn] of Object.entries(matchers)) {
+      g.__bun_custom_matchers[name] = fn;
+      // (a) asymmetric form: expect.foo(args) → matcher object.
       g.expect[name] = (...a) => asymmetric(name, (recv) => {
         const r = fn(recv, ...a);
         return r && r.pass;
