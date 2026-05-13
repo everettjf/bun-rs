@@ -71,13 +71,69 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                 r#"
                 (async () => {
                     const all = globalThis.__bun_test_collector || [];
-                    let pass = 0, fail = 0;
+                    let pass = 0, fail = 0, skipped = 0;
                     const failed = [];
+                    // Group tests by describe path so beforeAll/afterAll fire
+                    // at the right boundaries.
+                    function pathKey(p) { return p.join("\x1f"); }
+                    // Build a tree of seen path prefixes in registration order.
+                    // For each path, we run its beforeAll the first time we
+                    // see a test under it, and its afterAll once we move
+                    // away from it (or at the end of the file).
+                    // For simplicity, run beforeAll on the *first* test of
+                    // each unique path key (using the first such test's
+                    // beforeAll list, which already inherits parent hooks).
+                    const seenPaths = new Set();
+                    const afterAllByPath = new Map();
+                    async function runHooks(hooks, label) {
+                        for (const h of hooks || []) {
+                            try { await h(); } catch (e) {
+                                console.log("  ✗ " + label + " threw: " + (e && e.message ? e.message : e));
+                            }
+                        }
+                    }
                     async function runOne(t) {
                         const fullName = t.path.length ? t.path.concat(t.name).join(" > ") : t.name;
+                        if (t.skip) {
+                            console.log("  - " + fullName + " (skipped)");
+                            skipped++;
+                            return;
+                        }
+                        // Run beforeAll hooks for path prefixes we haven't
+                        // entered yet — outer-most first.
+                        const prefixes = [];
+                        for (let i = 0; i <= t.path.length; i++) prefixes.push(t.path.slice(0, i));
+                        for (const p of prefixes) {
+                            const k = pathKey(p);
+                            if (!seenPaths.has(k)) {
+                                seenPaths.add(k);
+                                // For the outermost (empty path), beforeAll hooks
+                                // attached at top level go into t.beforeAll. We
+                                // still only want to run them once.
+                                if (p.length === t.path.length) {
+                                    await runHooks(t.beforeAll, "beforeAll");
+                                    afterAllByPath.set(k, t.afterAll || []);
+                                }
+                            }
+                        }
                         try {
                             for (const h of t.beforeEach) await h();
-                            await t.fn();
+                            let result;
+                            try {
+                                result = await t.fn();
+                                if (t.failing) {
+                                    throw new Error("test was marked .failing but passed");
+                                }
+                            } catch (e) {
+                                if (t.failing) {
+                                    // .failing: error is expected; treat as pass.
+                                    for (const h of t.afterEach) await h().catch(()=>{});
+                                    console.log("  ✓ " + fullName + " (failing, threw as expected)");
+                                    pass++;
+                                    return;
+                                }
+                                throw e;
+                            }
                             for (const h of t.afterEach) await h();
                             console.log("  ✓ " + fullName);
                             pass++;
@@ -90,7 +146,12 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                         }
                     }
                     for (const t of all) await runOne(t);
-                    return { pass, fail, failed };
+                    // Run afterAll hooks (in reverse insertion order).
+                    const allPaths = Array.from(afterAllByPath.keys()).reverse();
+                    for (const k of allPaths) {
+                        await runHooks(afterAllByPath.get(k), "afterAll");
+                    }
+                    return { pass, fail, skipped, failed };
                 })()
                 "#,
                 Some("[test-runner]"),
@@ -247,6 +308,8 @@ const GLOBALS: &str = r#"
     g.__bun_test_collector.push({
       name, fn,
       path: c.path,
+      beforeAll: [...c.beforeAll],
+      afterAll: [...c.afterAll],
       beforeEach: [...c.beforeEach],
       afterEach: [...c.afterEach],
       skip,
