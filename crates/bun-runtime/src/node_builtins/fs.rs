@@ -27,6 +27,45 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     // fs.promises — wrap every sync fn in Promise.resolve / .reject.
     let promises_v = ctx.eval("({})", Some("[node:fs.promises]")).unwrap();
     install_async(ctx, &promises_v.to_object().unwrap());
+    // open() in fs.promises returns a FileHandle stub.
+    let _ = ctx.eval(
+        r#"
+        ((p, fs) => {
+            p.open = async function(path, flags) {
+                const fd = fs.openSync(path, flags || "r");
+                return {
+                    fd,
+                    close: async () => fs.closeSync(fd),
+                    [Symbol.asyncDispose]: async () => fs.closeSync(fd),
+                    read: async (buffer, offset, length, position) => ({
+                        bytesRead: fs.readSync(fd, buffer, offset, length, position),
+                        buffer,
+                    }),
+                    write: async (buffer, offset, length, position) => ({
+                        bytesWritten: fs.writeSync(fd, buffer, offset, length, position),
+                        buffer,
+                    }),
+                    readFile: async (opts) => fs.readFileSync(path, opts),
+                    writeFile: async (data, opts) => fs.writeFileSync(path, data, opts),
+                    stat: async () => fs.statSync(path),
+                    truncate: async (len) => fs.truncateSync(path, len),
+                    sync: async () => fs.fsyncSync(fd),
+                    chmod: async (mode) => fs.chmodSync(path, mode),
+                    chown: async (uid, gid) => fs.chownSync(path, uid, gid),
+                };
+            };
+            p.opendir = async (path) => fs.opendirSync ? fs.opendirSync(path) : { close: async () => {}, readSync: () => null };
+            p.mkdtemp = async (prefix) => {
+                const p2 = require("node:path");
+                const os = require("node:os");
+                const d = p2.join(os.tmpdir(), prefix + Math.random().toString(36).slice(2));
+                fs.mkdirSync(d, { recursive: true });
+                return d;
+            };
+        })
+        "#,
+        Some("[fs.promises.open]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[promises_v, exports_v])));
     exports.set_property("promises", &promises_v).unwrap();
 
     exports.set_property("default", &exports.as_value()).unwrap();

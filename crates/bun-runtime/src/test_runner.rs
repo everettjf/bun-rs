@@ -467,7 +467,13 @@ const GLOBALS: &str = r#"
                       typeof received === "string" ? received.includes(v) : false;
         check(found, v, "toContain");
       },
-      toHaveLength(n) { check(received && received.length === n, n, "toHaveLength"); },
+      toHaveLength(n) {
+        const len = received == null ? null
+                  : (received.length !== undefined ? received.length
+                  : (received.byteLength !== undefined ? received.byteLength
+                  : (received.size !== undefined ? received.size : null)));
+        check(len === n, n, "toHaveLength");
+      },
       toMatch(re) { check(typeof re === "string" ? received.includes(re) : re.test(received), re, "toMatch"); },
       // Alias: jest's toThrowError === toThrow.
       toThrowError(matcher) { return obj.toThrow(matcher); },
