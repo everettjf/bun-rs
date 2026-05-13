@@ -1057,6 +1057,38 @@ const GLOBALS: &str = r#"
     });
     return make();
   };
+  // expect.not.NAME(args) — asymmetric matcher that's inverted.
+  // Built lazily: g.expect.not returns a Proxy that, on property access,
+  // looks up the corresponding asymmetric/custom matcher and wraps it
+  // so its predicate is negated.
+  Object.defineProperty(g.expect, "not", {
+    get() {
+      return new Proxy({}, {
+        get(_, k) {
+          // Built-in asymmetric matchers (any, anything, stringContaining,
+          // etc.) on g.expect, OR a custom matcher registered via extend.
+          const orig = g.expect[k];
+          if (typeof orig === "function") {
+            return function (...args) {
+              const a = orig(...args);
+              if (a && a.__bun_match && typeof a.asymmetricMatch === "function") {
+                return {
+                  __bun_match: true,
+                  __bun_match_name: "Not<" + (a.__bun_match_name || k) + ">",
+                  asymmetricMatch: (v) => !a.asymmetricMatch(v),
+                  toString: () => "Not<" + (a.__bun_match_name || k) + ">",
+                };
+              }
+              return a;
+            };
+          }
+          return undefined;
+        }
+      });
+    },
+    configurable: true,
+  });
+
   g.__bun_custom_matchers = g.__bun_custom_matchers || {};
   g.expect.extend = function (matchers) {
     if (!matchers || typeof matchers !== "object") {
