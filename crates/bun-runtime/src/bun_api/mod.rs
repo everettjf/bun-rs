@@ -622,12 +622,59 @@ const BUN_HELPERS: &str = r##"
   // ── Bun.gc / Bun.allocUnsafe / Bun.deepEquals / Bun.deepMatch ───────
   Bun.gc = function (sync) { /* no-op */ return 0; };
   Bun.allocUnsafe = function (n) { return new Uint8Array(n); };
-  Bun.deepEquals = function (a, b) {
+  Bun.deepEquals = function (a, b, strict) {
     if (Object.is(a, b)) return true;
     if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+    // Constructor check: "fake" objects with the same prototype but a
+    // different constructor are NOT deep-equal (Node node#10258).
+    if (a.constructor !== b.constructor) return false;
+    // Date / RegExp / Error / Map / Set specialized handling. These check
+    // toString tag too because user code can install a fake constructor
+    // with the same prototype but no internal slot.
+    const aTag = Object.prototype.toString.call(a);
+    const bTag = Object.prototype.toString.call(b);
+    if (aTag !== bTag) return false;
+    if (aTag === "[object Date]") {
+      try { return a.getTime() === b.getTime(); } catch { return false; }
+    }
+    if (aTag === "[object RegExp]") {
+      try { return a.toString() === b.toString(); } catch { return false; }
+    }
+    if (aTag === "[object Error]") return a.name === b.name && a.message === b.message;
+    if (aTag === "[object Map]") {
+      try {
+        if (a.size !== b.size) return false;
+        for (const [k, v] of a) {
+          if (!b.has(k) || !Bun.deepEquals(v, b.get(k), strict)) return false;
+        }
+        return true;
+      } catch { return false; }
+    }
+    if (aTag === "[object Set]") {
+      try {
+        if (a.size !== b.size) return false;
+        for (const v of a) if (!b.has(v)) return false;
+        return true;
+      } catch { return false; }
+    }
+    if (ArrayBuffer.isView(a)) {
+      if (!ArrayBuffer.isView(b)) return false;
+      if (a.byteLength !== b.byteLength) return false;
+      for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+    if (Array.isArray(a)) {
+      if (!Array.isArray(b) || a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (!Bun.deepEquals(a[i], b[i], strict)) return false;
+      return true;
+    }
     const ak = Object.keys(a), bk = Object.keys(b);
     if (ak.length !== bk.length) return false;
-    return ak.every((k) => Bun.deepEquals(a[k], b[k]));
+    for (const k of ak) {
+      if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+      if (!Bun.deepEquals(a[k], b[k], strict)) return false;
+    }
+    return true;
   };
   Bun.deepMatch = function (subset, sup) {
     if (subset === sup) return true;
