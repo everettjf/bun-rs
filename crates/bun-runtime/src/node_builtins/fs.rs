@@ -435,7 +435,7 @@ fn push_error(r_id: usize, message: String) {
 fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
     bind(ctx, obj, "readFileSync", |args| {
         let path = args.get(0).to_string();
-        let bytes = fs::read(&path).map_err(io_err)?;
+        let bytes = fs::read(&path).map_err(|e| io_err_path(e, &path))?;
         let ctx = args.context();
 
         // Encoding arg may be a string OR an options object `{ encoding }`.
@@ -992,7 +992,33 @@ fn stat_obj<'a>(ctx: &'a Context, md: fs::Metadata) -> Value<'a> {
 }
 
 fn io_err(e: std::io::Error) -> String {
-    format!("ENOENT: {e}")
+    use std::io::ErrorKind;
+    let (code, msg) = match e.kind() {
+        ErrorKind::NotFound => ("ENOENT", "no such file or directory"),
+        ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
+        ErrorKind::AlreadyExists => ("EEXIST", "file already exists"),
+        ErrorKind::WouldBlock => ("EAGAIN", "resource temporarily unavailable"),
+        ErrorKind::InvalidInput => ("EINVAL", "invalid argument"),
+        ErrorKind::InvalidData => ("EILSEQ", "invalid or incomplete multibyte or wide character"),
+        ErrorKind::TimedOut => ("ETIMEDOUT", "operation timed out"),
+        ErrorKind::WriteZero => ("EIO", "I/O error"),
+        ErrorKind::Interrupted => ("EINTR", "interrupted system call"),
+        ErrorKind::Unsupported => ("ENOSYS", "function not implemented"),
+        ErrorKind::OutOfMemory => ("ENOMEM", "cannot allocate memory"),
+        _ => ("EIO", "I/O error"),
+    };
+    format!("{code}: {msg} ({e})")
+}
+
+fn io_err_path(e: std::io::Error, path: &str) -> String {
+    use std::io::ErrorKind;
+    let (code, msg) = match e.kind() {
+        ErrorKind::NotFound => ("ENOENT", "no such file or directory"),
+        ErrorKind::PermissionDenied => ("EACCES", "permission denied"),
+        ErrorKind::AlreadyExists => ("EEXIST", "file already exists"),
+        _ => return io_err(e),
+    };
+    format!("{code}: {msg}, '{path}'")
 }
 
 fn bind<F>(ctx: &Context, obj: &bun_jsc::Object<'_>, name: &str, f: F)
