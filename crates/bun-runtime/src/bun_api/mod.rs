@@ -724,9 +724,38 @@ const BUN_HELPERS: &str = r#"
       async bytes() { return this.stdout; },
       async arrayBuffer() { return this.stdout.buffer.slice(0); },
       async lines() { return new TextDecoder().decode(this.stdout).split("\n"); },
-      then(res, rej) { return Promise.resolve(this).then(res, rej); },
-      catch(rej) { return Promise.resolve(this).catch(rej); },
-      finally(fn) { return Promise.resolve(this).finally(fn); },
+      // IMPORTANT: must pass onFulfilled a NON-thenable view, otherwise
+      // `await obj` -> obj.then(resolve) -> resolve(obj) -> the runtime
+      // sees resolve called with a thenable and calls obj.then again ->
+      // infinite recursion. Build a plain snapshot view.
+      then(onFulfilled, onRejected) {
+        const plain = {
+          exitCode: this.exitCode,
+          stdout: this.stdout,
+          stderr: this.stderr,
+          stdoutText: this.stdoutText,
+          stderrText: this.stderrText,
+          text: this.text.bind(this),
+          json: this.json.bind(this),
+          bytes: this.bytes.bind(this),
+          arrayBuffer: this.arrayBuffer.bind(this),
+          lines: this.lines.bind(this),
+          quiet: this.quiet.bind(this),
+          nothrow: this.nothrow.bind(this),
+        };
+        try {
+          const v = onFulfilled ? onFulfilled(plain) : plain;
+          return Promise.resolve(v);
+        } catch (e) {
+          if (onRejected) {
+            try { return Promise.resolve(onRejected(e)); }
+            catch (e2) { return Promise.reject(e2); }
+          }
+          return Promise.reject(e);
+        }
+      },
+      catch(onRejected) { return this.then(undefined, onRejected); },
+      finally(fn) { try { fn(); } catch {} return this.then(v => v); },
       quiet() { return this; },
       nothrow() { return this; },
       env() { return this; },
@@ -919,14 +948,21 @@ const BUN_HELPERS: &str = r#"
   // tar tool still need a proper tar encoder.
   Bun.Archive = class Archive {
     constructor(source) {
+      if (arguments.length === 0) {
+        throw new TypeError("Archive requires at least one argument");
+      }
+      if (source === null) {
+        throw new TypeError("Archive: source cannot be null");
+      }
+      if (typeof source === "number" || typeof source === "boolean") {
+        throw new TypeError("Archive: source must be an object, Blob, Uint8Array, ArrayBuffer, or Archive");
+      }
       this._entries = new Map();
-      if (source && source instanceof Bun.Archive) {
+      if (source instanceof Bun.Archive) {
         for (const [k, v] of source._entries) this._entries.set(k, v);
         return;
       }
       if (source instanceof Blob || source instanceof Uint8Array || source instanceof ArrayBuffer) {
-        // From a serialized blob — round-trip via _bytes property if
-        // present, otherwise store as the sole entry.
         if (source.__bun_archive_entries) {
           for (const [k, v] of source.__bun_archive_entries) this._entries.set(k, v);
         } else {
@@ -936,11 +972,22 @@ const BUN_HELPERS: &str = r#"
         }
         return;
       }
-      if (source && typeof source === "object") {
+      if (typeof source === "object") {
         for (const [name, value] of Object.entries(source)) {
-          this._entries.set(name, value);
+          // Coerce non-string/buffer/blob values to string (matches Bun's
+          // archive ergonomics).
+          const v = (typeof value === "string"
+            || value instanceof Uint8Array
+            || value instanceof ArrayBuffer
+            || ArrayBuffer.isView(value)
+            || value instanceof Blob)
+            ? value
+            : String(value);
+          this._entries.set(name, v);
         }
+        return;
       }
+      throw new TypeError("Archive: unsupported source type");
     }
     get size() {
       let total = 0;
