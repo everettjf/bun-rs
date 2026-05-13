@@ -162,15 +162,20 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
     let mut emit = Emit::new(source.len() + 256);
     let mut imports = Vec::<String>::new();
     let mut next_local: u32 = 0;
-    let mut alloc_local = |imports: &mut Vec<String>, src: &str| -> String {
-        if !imports.iter().any(|s| s == src) {
-            imports.push(src.to_string());
+    // Map statement-span-start → local var name for ExportAll / ExportNamed-
+    // with-source, so PASS B can reuse the local allocated in PASS A.
+    let mut hoisted_locals: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+
+    let push_spec = |imports: &mut Vec<String>, spec: &str| {
+        if !imports.iter().any(|s| s == spec) {
+            imports.push(spec.to_string());
         }
-        let id = next_local;
-        next_local += 1;
-        format!("__m_{id}")
     };
 
+    // ── PASS A — hoist EVERY import-bearing require call to the top.
+    // ESM imports are hoisted before any module body runs; emitting them in
+    // source order broke modules that reference an imported binding before
+    // its `import` statement appears textually (TDZ error).
     for stmt in &program.body {
         match stmt {
             Statement::ImportDeclaration(d) => {
@@ -178,7 +183,9 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     continue;
                 }
                 let spec_text = &d.source.value;
-                let local = alloc_local(&mut imports, spec_text);
+                push_spec(&mut imports, spec_text);
+                let local = format!("__m_{}", next_local);
+                next_local += 1;
                 emit.synth(&format!(
                     "const {local} = await __bun_require({}, __filename);",
                     js_string(spec_text)
@@ -188,9 +195,6 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     for s in specs {
                         match s {
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(ds) => {
-                                // esModuleInterop: ESM modules expose
-                                // `.default`; CJS (whose .default is
-                                // undefined) gets the whole module.exports.
                                 emit.synth(&format!(
                                     "const {} = ({local} && {local}.__esModule) ? {local}.default : {local};",
                                     binding_name(&ds.local)
@@ -220,14 +224,49 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     }
                 }
             }
-
             Statement::ExportAllDeclaration(d) => {
                 let spec_text = &d.source.value;
-                let local = alloc_local(&mut imports, spec_text);
+                push_spec(&mut imports, spec_text);
+                let local = format!("__m_{}", next_local);
+                next_local += 1;
                 emit.synth(&format!(
                     "const {local} = await __bun_require({}, __filename);",
                     js_string(spec_text)
                 ));
+                hoisted_locals.insert(d.span.start, local);
+            }
+            Statement::ExportNamedDeclaration(d) => {
+                if d.export_kind.is_type() {
+                    continue;
+                }
+                if let Some(src) = &d.source {
+                    let spec_text = &src.value;
+                    push_spec(&mut imports, spec_text);
+                    let local = format!("__m_{}", next_local);
+                    next_local += 1;
+                    emit.synth(&format!(
+                        "const {local} = await __bun_require({}, __filename);",
+                        js_string(spec_text)
+                    ));
+                    hoisted_locals.insert(d.span.start, local);
+                    let _ = src;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ── PASS B — body. Imports are skipped (hoisted in PASS A). For
+    // ExportAll / ExportNamed-with-source we emit ONLY the `__exports.X = ...`
+    // wire-up, reusing the local from `hoisted_locals`.
+    for stmt in &program.body {
+        match stmt {
+            Statement::ImportDeclaration(_) => {
+                // already hoisted in PASS A
+            }
+
+            Statement::ExportAllDeclaration(d) => {
+                let local = hoisted_locals.get(&d.span.start).cloned().unwrap_or_default();
                 if let Some(exported) = &d.exported {
                     let name = export_name_str(exported);
                     if is_ident(&name) {
@@ -264,13 +303,8 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                             emit.synth(&format!("__exports.{n} = {n};"));
                         }
                     }
-                } else if let Some(src) = &d.source {
-                    let spec_text = &src.value;
-                    let local = alloc_local(&mut imports, spec_text);
-                    emit.synth(&format!(
-                        "const {local} = await __bun_require({}, __filename);",
-                        js_string(spec_text)
-                    ));
+                } else if d.source.is_some() {
+                    let local = hoisted_locals.get(&d.span.start).cloned().unwrap_or_default();
                     for s in &d.specifiers {
                         let local_name = export_name_str(&s.local);
                         let exported_name = export_name_str(&s.exported);

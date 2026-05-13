@@ -861,7 +861,11 @@ const GLOBALS: &str = r#"
   };
   g.expect.assertions = function () {};
   g.expect.hasAssertions = function () {};
-  g.expect.unreachable = function () { throw new Error("expect.unreachable() reached"); };
+  g.expect.unreachable = function (msg) {
+    if (msg instanceof Error) throw msg;
+    if (typeof msg === "string" && msg.length) throw new Error(msg);
+    throw new Error("reached unreachable code");
+  };
   g.expect.objectContaining = g.expect.objectContaining || ((sub) => asymmetric("ObjectContaining", a => Object.keys(sub).every(k => deepEq(a && a[k], sub[k]))));
   g.expect.arrayContaining = g.expect.arrayContaining || ((sub) => asymmetric("ArrayContaining", a => Array.isArray(a) && sub.every(v => a.some(x => deepEq(x, v)))));
   // expectTypeOf: TypeScript type-only assertions; runtime no-op chainable.

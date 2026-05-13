@@ -79,10 +79,12 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
 
         let p_exists = path.clone();
         bind(ctx, &obj, "exists", move |args| {
-            Ok(Value::new_bool(
-                args.context(),
-                std::path::Path::new(&p_exists).exists(),
-            ))
+            // Bun's Bun.file().exists() reports true only for regular files
+            // (and named pipes, sockets, etc), NOT for directories.
+            let exists = std::fs::metadata(&p_exists)
+                .map(|m| !m.is_dir())
+                .unwrap_or(false);
+            Ok(Value::new_bool(args.context(), exists))
         });
 
         // .slice(start, end?, type?) — returns a new Bun.file-like object

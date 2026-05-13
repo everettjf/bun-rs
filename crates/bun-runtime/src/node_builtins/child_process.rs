@@ -498,6 +498,16 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Ok(child_v)
     });
 
+    // Stub ChildProcess class so test harnesses can monkey-patch
+    // `ChildProcess.prototype` without throwing.
+    let cp_class = ctx
+        .eval(
+            r#"(function () { class ChildProcess { constructor() {} } return ChildProcess; })()"#,
+            Some("[child_process.ChildProcess-stub]"),
+        )
+        .unwrap();
+    exports.set_property("ChildProcess", &cp_class).ok();
+
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
 }
