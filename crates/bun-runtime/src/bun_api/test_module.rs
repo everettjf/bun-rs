@@ -37,11 +37,16 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 let nextResult = undefined;
                 let returnValueSet = false;
                 let returnValue = undefined;
+                const onceQueue = [];          // fixed returns / impls
                 const fn = function (...args) {
                     calls.push(args);
                     try {
                         let v;
-                        if (returnValueSet) v = returnValue;
+                        if (onceQueue.length > 0) {
+                            const o = onceQueue.shift();
+                            if (o.kind === "return") v = o.value;
+                            else v = o.impl.apply(this, args);
+                        } else if (returnValueSet) v = returnValue;
                         else if (impl) v = impl.apply(this, args);
                         else v = undefined;
                         results.push({ type: "return", value: v });
@@ -62,13 +67,13 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 fn.mockReset = () => { fn.mockClear(); returnValueSet = false; returnValue = undefined; impl = null; return fn; };
                 fn.mockRestore = () => fn.mockReset();
                 fn.mockReturnValue = (v) => { returnValueSet = true; returnValue = v; return fn; };
-                fn.mockReturnValueOnce = fn.mockReturnValue;
+                fn.mockReturnValueOnce = (v) => { onceQueue.push({ kind: "return", value: v }); return fn; };
                 fn.mockResolvedValue = (v) => { returnValueSet = true; returnValue = Promise.resolve(v); return fn; };
-                fn.mockResolvedValueOnce = fn.mockResolvedValue;
+                fn.mockResolvedValueOnce = (v) => { onceQueue.push({ kind: "return", value: Promise.resolve(v) }); return fn; };
                 fn.mockRejectedValue = (v) => { returnValueSet = true; returnValue = Promise.reject(v); return fn; };
-                fn.mockRejectedValueOnce = fn.mockRejectedValue;
+                fn.mockRejectedValueOnce = (v) => { onceQueue.push({ kind: "return", value: Promise.reject(v) }); return fn; };
                 fn.mockImplementation = (newImpl) => { impl = newImpl; return fn; };
-                fn.mockImplementationOnce = fn.mockImplementation;
+                fn.mockImplementationOnce = (newImpl) => { onceQueue.push({ kind: "impl", impl: newImpl }); return fn; };
                 fn.mockName = (n) => { fn._mockName = n; return fn; };
                 fn.getMockName = () => fn._mockName || "jest.fn()";
                 // mock() return is a disposable: `using fn = mock(...)`

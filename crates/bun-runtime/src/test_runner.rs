@@ -747,6 +747,7 @@ const GLOBALS: &str = r#"
         check(results.some(r => r.type === "return"), undefined, "toHaveReturned");
       },
       toHaveReturnedWith(v) {
+        if (!received || !received.mock) throw new Error("Expected value must be a mock function");
         const results = (received && received.mock && received.mock.results) || [];
         const ok = results.some(r => r.type === "return" && deepEq(r.value, v));
         check(ok, v, "toHaveReturnedWith");
