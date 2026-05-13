@@ -831,10 +831,18 @@ const GLOBALS: &str = r#"
       for (const [name, fn] of Object.entries(g.__bun_custom_matchers)) {
         if (obj[name] !== undefined) continue;
         obj[name] = function (...args) {
-          const r = fn(received, ...args);
-          const pass = !!(r && r.pass);
+          const r = fn.call({
+            isNot: not,
+            promise: "",
+            utils: {},
+            equals: (a, b) => deepEq(a, b),
+          }, received, ...args);
+          if (r === null || typeof r !== "object" || typeof r.pass !== "boolean") {
+            throw new Error("Unexpected return from matcher function `" + name + "`.\nMatcher functions should return an object in the following format:\n  {message?: string | function, pass: boolean}\n'" + (r === undefined ? "undefined" : JSON.stringify(r)) + "' was returned");
+          }
+          const pass = !!r.pass;
           if (not ? pass : !pass) {
-            const msg = (r && typeof r.message === "function") ? r.message() : String(r && r.message || `${name} matcher failed`);
+            const msg = (typeof r.message === "function") ? r.message() : String(r.message || `${name} matcher failed`);
             throw new Error(msg);
           }
         };
@@ -955,7 +963,13 @@ const GLOBALS: &str = r#"
   };
   g.__bun_custom_matchers = g.__bun_custom_matchers || {};
   g.expect.extend = function (matchers) {
+    if (!matchers || typeof matchers !== "object") {
+      throw new Error("expect.extend: matchers must be an object");
+    }
     for (const [name, fn] of Object.entries(matchers)) {
+      if (typeof fn !== "function") {
+        throw new Error("expect.extend: `" + name + "` is not a valid matcher. Must be a function, is " + JSON.stringify(typeof fn));
+      }
       g.__bun_custom_matchers[name] = fn;
       // (a) asymmetric form: expect.foo(args) → matcher object.
       g.expect[name] = (...a) => asymmetric(name, (recv) => {
