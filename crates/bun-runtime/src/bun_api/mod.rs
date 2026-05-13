@@ -971,7 +971,15 @@ const BUN_HELPERS: &str = r#"
 
   // ── Bun.Terminal (stub) — terminal helpers ─────────────────────────
   Bun.Terminal = class Terminal {
-    constructor(_opts) { this.opts = _opts || {}; }
+    constructor(_opts) {
+      this.opts = _opts || {};
+      this.cols = 80;
+      this.rows = 24;
+      this.pid = 0;
+      // Symbol.dispose for `using term = new Bun.Terminal(...)` semantics.
+      Object.defineProperty(this, Symbol.dispose, { value: () => this.kill && this.kill(), configurable: true });
+      Object.defineProperty(this, Symbol.asyncDispose, { value: async () => this.kill && this.kill(), configurable: true });
+    }
     write() {}
     cursor() { return this; }
     erase() { return this; }
@@ -982,6 +990,12 @@ const BUN_HELPERS: &str = r#"
     bell() {}
     save() {}
     restore() {}
+    resize(cols, rows) { this.cols = cols; this.rows = rows; }
+    kill() {}
+    close() { this.kill(); }
+    get exited() { return Promise.resolve(0); }
+    get readable() { return null; }
+    get writable() { return null; }
   };
 
   // ── Bun.Image (stub) — image decoder ───────────────────────────────

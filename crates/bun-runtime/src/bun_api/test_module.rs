@@ -88,6 +88,9 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                     const m = mkMock(typeof orig === "function" ? orig.bind(obj) : undefined);
                     obj[key] = m;
                     m.mockRestore = () => { obj[key] = orig; };
+                    // Disposable: `using spy = spyOn(obj, "m")` restores on scope exit.
+                    Object.defineProperty(m, Symbol.dispose, { value: () => m.mockRestore(), configurable: true });
+                    Object.defineProperty(m, Symbol.asyncDispose, { value: async () => m.mockRestore(), configurable: true });
                     return m;
                 },
                 setSystemTime: () => {},
