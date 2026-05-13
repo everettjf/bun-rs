@@ -435,13 +435,56 @@ const GLOBALS: &str = r#"
   g.test.failingIf = (cond) => (cond ? g.test.failing : g.test);
   g.it.failingIf = g.test.failingIf;
   // .each pattern continues below
+  function fmtEachName(template, row) {
+    // Jest's %f/%d/%i/%s/%o/%j tokens get the row values in order. Bun
+    // falls back to bracketed JSON if no tokens.
+    if (typeof template !== "string") return String(template);
+    let i = 0;
+    const values = Array.isArray(row) ? row : [row];
+    let out = "";
+    let p = 0;
+    while (p < template.length) {
+      const ch = template.charAt(p);
+      if (ch === "%" && p + 1 < template.length) {
+        const next = template.charAt(p + 1);
+        if (next === "%") { out += "%"; p += 2; continue; }
+        const v = values[i++];
+        if (next === "o" || next === "O" || next === "j") out += safeStringify(v);
+        else if (next === "f" || next === "d" || next === "i") out += String(Number(v));
+        else if (next === "s") out += String(v);
+        else out += String(v);
+        p += 2;
+        continue;
+      }
+      out += ch;
+      p++;
+    }
+    if (i === 0) out += " [" + safeStringify(values) + "]";
+    return out;
+  }
   g.test.each = (rows) => (name, fn) => {
     for (const row of rows) {
       const args = Array.isArray(row) ? row : [row];
-      pushTest(name + " [" + safeStringify(args) + "]", () => fn(...args));
+      // Preserve done-callback semantics: if fn declares one more
+      // parameter than there are args, expose the test runner's done.
+      const wantsDone = fn.length > args.length;
+      let wrapper;
+      if (wantsDone) {
+        // Synthesize a wrapper whose .length is 1 so the runner passes done.
+        wrapper = function (done) { return fn(...args, done); };
+      } else {
+        wrapper = () => fn(...args);
+      }
+      pushTest(fmtEachName(name, row), wrapper);
     }
   };
   g.it.each = g.test.each;
+  g.describe.each = g.describe.each || ((rows) => (name, body) => {
+    for (const row of rows) {
+      const args = Array.isArray(row) ? row : [row];
+      g.describe(fmtEachName(name, row), () => body(...args));
+    }
+  });
 
   g.beforeAll = (fn) => curr().beforeAll.push(fn);
   g.afterAll = (fn) => curr().afterAll.push(fn);
