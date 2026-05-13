@@ -468,19 +468,48 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
     });
     obj.set_property("resolveSync", &resolve_sync.value_in(ctx)).ok();
     std::mem::forget(resolve_sync);
-    // resolve(spec, from?) - sync function that returns the resolved path.
-    // Bun's import.meta.resolve is synchronous (unlike Node's), so we
-    // just delegate to resolveSync.
+    // resolve(spec, from?) - sync function that returns a file:// URL or
+    // a bare/protocol specifier (node:path, etc). Bun's import.meta.resolve
+    // is synchronous (unlike Node's spec) and returns URL strings.
+    let import_dir2 = dirname.clone();
     let _ = ctx.eval(
         &format!(
             r#"
             ((m) => {{
-                m.resolve = function(spec, _from) {{ return m.resolveSync(spec); }};
+                const path = require("node:path");
+                function toFileUrl(p) {{
+                    // Already a URL or non-file specifier (node:, http:, npm:, bun:):
+                    if (/^([a-z][a-z0-9+.-]*):/i.test(p) || p.startsWith("file://")) {{
+                        return p.startsWith("file://") ? p : p;
+                    }}
+                    let abs = path.isAbsolute(p) ? p : path.resolve({:?}, p);
+                    abs = path.normalize(abs);
+                    // Percent-encode the path, keeping `/`.
+                    const enc = encodeURI(abs).replace(/#/g, "%23");
+                    return "file://" + enc;
+                }}
+                // Node built-in names: bare "path" / "fs" / etc resolves to
+                // "node:path" / "node:fs". Mirror Bun's behavior.
+                const NODE_BUILTINS = new Set([
+                    "assert","async_hooks","buffer","child_process","cluster","console",
+                    "constants","crypto","dgram","diagnostics_channel","dns","domain","events",
+                    "fs","http","http2","https","inspector","module","net","os","path",
+                    "perf_hooks","process","punycode","querystring","readline","repl","stream",
+                    "string_decoder","timers","tls","trace_events","tty","url","util","v8","vm",
+                    "wasi","worker_threads","zlib","sys"
+                ]);
+                m.resolve = function(spec, _from) {{
+                    if (typeof spec !== "string" || spec.length === 0) {{
+                        throw new TypeError("Invalid specifier");
+                    }}
+                    if (NODE_BUILTINS.has(spec)) return "node:" + spec;
+                    return toFileUrl(spec);
+                }};
                 m.require = globalThis.require;
                 m.path = {:?};
             }})
             "#,
-            filename
+            import_dir2, filename
         ),
         Some("[import.meta.resolve]"),
     ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[obj.as_value()])));

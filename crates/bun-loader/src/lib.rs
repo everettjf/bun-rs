@@ -60,9 +60,6 @@ pub struct PreparedModule {
 /// [`PreparedModule`]. Resolution of nested imports happens at runtime via
 /// `__bun_require`.
 pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| LoaderError::Io(path.to_path_buf(), e))?;
-
     // Non-JS file types: wrap as a CJS module that exports a parsed
     // value. ESM `import x from "./file.json"` and `import x from
     // "./file.txt"` go through this path.
@@ -71,6 +68,37 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
+
+    // Binary assets short-circuit before reading the file (some are not
+    // UTF-8). Bun returns the absolute file path string from
+    // `import asset from "./file.png"`.
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "bmp"
+        | "mp3" | "mp4" | "wav" | "ogg" | "webm" | "mov"
+        | "ttf" | "otf" | "woff" | "woff2" | "eot"
+        | "pdf" | "zip" | "wasm" | "node" | "bin" => {
+            let p = path.to_string_lossy().into_owned();
+            let escaped = p
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "module.exports = `{}`;\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: String::new(),
+            });
+        }
+        _ => {}
+    }
+
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| LoaderError::Io(path.to_path_buf(), e))?;
     match ext.as_str() {
         "json" => {
             // Strict JSON — fast path: embed source as JS string literal
@@ -178,6 +206,26 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
                 rewritten: wrapped,
                 line_map: vec![0],
                 original_source: source,
+            });
+        }
+        // SVG is text — could go either way; Bun returns the path so we
+        // do too.
+        "svg" => {
+            let p = path.to_string_lossy().into_owned();
+            let escaped = p
+                .replace('\\', "\\\\")
+                .replace('`', "\\`")
+                .replace("${", "\\${");
+            let wrapped = format!(
+                "module.exports = `{}`;\n",
+                escaped
+            );
+            return Ok(PreparedModule {
+                path: path.to_path_buf(),
+                static_imports: vec![],
+                rewritten: wrapped,
+                line_map: vec![0],
+                original_source: String::new(),
             });
         }
         _ => {}
