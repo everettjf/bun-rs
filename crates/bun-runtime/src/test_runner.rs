@@ -937,18 +937,17 @@ const GLOBALS: &str = r#"
     // assertion is implicit) plus the original .fail / .pass /
     // .unreachable helpers.
     if (arguments.length === 0) {
-      const chain = mkExpect(undefined, false);
-      chain.fail = (m) => { throw new Error(m || "expect().fail() called"); };
-      chain.pass = () => {};
-      chain.unreachable = () => { throw new Error("expect().unreachable()"); };
-      Object.defineProperty(chain, "not", {
-        get() {
-          const c = mkExpect(undefined, true);
-          c.fail = chain.fail; c.pass = chain.pass; c.unreachable = chain.unreachable;
-          return c;
-        }
-      });
-      return chain;
+      function makeNoArgChain(flipped) {
+        const chain = mkExpect(undefined, flipped);
+        chain.fail = (m) => { if (!flipped) throw new Error(m || "expect().fail() called"); };
+        chain.pass = (m) => { if (flipped) throw new Error(m || "expect().pass() called"); };
+        chain.unreachable = (m) => { if (!flipped) throw new Error(m || "expect().unreachable()"); };
+        Object.defineProperty(chain, "not", {
+          get() { return makeNoArgChain(!flipped); }
+        });
+        return chain;
+      }
+      return makeNoArgChain(false);
     }
     function makeChain(notFlag) {
       const e = mkExpect(received, notFlag);
