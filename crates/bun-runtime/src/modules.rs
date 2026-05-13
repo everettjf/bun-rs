@@ -69,6 +69,30 @@ pub fn install_module_loader(ctx: &Context) {
         .expect("install require");
     std::mem::forget(require_cb);
 
+    // `__bun_require_sync(spec, importer)` — per-module CJS require called
+    // from the wrapper's `const require = (spec) => __bun_require_sync(...)`.
+    let require_sync_cb = Callback::new(ctx, "__bun_require_sync", |args| {
+        if args.len() < 1 {
+            return Err("require: missing spec".to_string());
+        }
+        let spec = args.get(0).to_string();
+        let importer_str = if args.len() >= 2 { args.get(1).to_string() } else { String::new() };
+        let importer = if importer_str.is_empty() {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("anon.js")
+        } else {
+            PathBuf::from(importer_str)
+        };
+        let promise = load_module(args.context(), &spec, &importer)
+            .map_err(|e| e.to_string())?;
+        await_promise(args.context(), promise)
+    });
+    ctx.global_object()
+        .set_property("__bun_require_sync", &require_sync_cb.value_in(ctx))
+        .expect("install __bun_require_sync");
+    std::mem::forget(require_sync_cb);
+
     // require.resolve(spec) — return the absolute resolved path, or the
     // spec itself for node:/bun:/bare-builtin names.
     let _ = ctx.eval(
@@ -265,15 +289,42 @@ fn load_module<'ctx>(
     // ESM modules get __esModule = true so default-imports unwrap correctly;
     // CJS files (no static imports/exports) leave it false, and the
     // default-import shim in the rewriter falls back to the whole value.
-    let wrapped = format!(
-        "(async function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
-           const __exports = __module.exports;\n\
-           const exports = __module.exports;\n\
-           const module = __module;\n\
-           {}\n\
-         }})",
-        prepared.rewritten
-    );
+    // Heuristic: if the prepared body has no static imports (we hoist
+    // `await __bun_require` calls only when imports exist) and no top-
+    // level `await` token, use a SYNC wrapper. This lets `require()` of
+    // pure-JSON / pure-CJS modules complete without spinning the event
+    // loop on a never-firing microtask (JSC doesn't auto-drain
+    // microtasks while we're nested inside a Rust→JS callback).
+    let is_sync = prepared.static_imports.is_empty()
+        && !prepared.rewritten.contains("await ");
+    // Per-module CJS `require` so `require("./foo")` resolves relative to
+    // the calling module's filename (not the global cwd). Bun does this
+    // implicitly; our globalThis.require uses cwd which is wrong for
+    // nested requires.
+    let local_require = "const require = (spec) => globalThis.__bun_require_sync(spec, __filename);\n";
+    let wrapped = if is_sync {
+        format!(
+            "(function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
+               const __exports = __module.exports;\n\
+               const exports = __module.exports;\n\
+               const module = __module;\n\
+               {}\
+               {}\n\
+             }})",
+            local_require, prepared.rewritten
+        )
+    } else {
+        format!(
+            "(async function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
+               const __exports = __module.exports;\n\
+               const exports = __module.exports;\n\
+               const module = __module;\n\
+               {}\
+               {}\n\
+             }})",
+            local_require, prepared.rewritten
+        )
+    };
 
     // Eval the wrapper to get a callable function.
     let factory_val = ctx
@@ -330,18 +381,38 @@ fn load_module<'ctx>(
             .map(|o| o.set_property("__esModule", &Value::new_bool(ctx, true)));
     }
 
-    let body_promise = factory
-        .call(None, &[module_obj, require_fn, filename, dirname, meta])
+    let body_result = factory
+        .call(None, &[module_obj.clone(), require_fn, filename, dirname, meta])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),
         })?;
 
-    // Chain `bodyPromise.then(() => exports)` in JS so the caller's
-    // `await __bun_require(...)` sees the exports object only after the body
-    // has finished evaluating. For pure-sync bodies the chain resolves in the
-    // next microtask checkpoint — which `await_promise` (called at entry)
-    // forces via a no-op eval.
+    if is_sync {
+        // Sync wrapper returned undefined; module.exports holds the final
+        // value (possibly reassigned by CJS `module.exports = fn`). Read
+        // it back from the indirection object and update the cache slot.
+        let module_obj_o2 = module_obj.to_object().map_err(|e| LoaderRuntimeError::Eval {
+            path: abs.clone(),
+            message: e.to_string(),
+        })?;
+        let final_exports = module_obj_o2
+            .get_property("exports")
+            .map_err(|e| LoaderRuntimeError::Eval {
+                path: abs.clone(),
+                message: e.to_string(),
+            })?;
+        let new_raw = final_exports.as_raw();
+        if new_raw != exports_raw {
+            unsafe { sys::JSValueProtect(ctx.as_raw(), new_raw); }
+            CACHE.with(|c| c.borrow_mut().insert(abs.clone(), new_raw));
+        }
+        return Ok(final_exports);
+    }
+
+    // Async path: chain `bodyPromise.then(() => exports)` so callers'
+    // `await __bun_require(...)` sees the exports object only after the
+    // body finishes evaluating.
     let chain_fn = ctx
         .global_object()
         .get_property("__bun_chain_exports")
@@ -350,10 +421,8 @@ fn load_module<'ctx>(
             path: abs.clone(),
             message: e.to_string(),
         })?;
-    // Pass `__module` so the chain can return module.exports — which may
-    // have been reassigned by CJS bodies (`module.exports = fn`).
     let chained = chain_fn
-        .call(None, &[body_promise, module_obj])
+        .call(None, &[body_result, module_obj])
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),

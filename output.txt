@@ -1,2 +1,1 @@
-error: Uncaught process.stdin.pipe is not a function. (In 'process.stdin.pipe(process.stderr)', 'process.stdin.pipe' is undefined)
-global code@[inline]:1:19
+builder test
