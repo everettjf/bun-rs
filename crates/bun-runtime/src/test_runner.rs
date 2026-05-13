@@ -162,6 +162,8 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             globalThis.__bun_assertion_state.count = 0;
                             globalThis.__bun_assertion_state.expected = null;
                             globalThis.__bun_assertion_state.hasAny = false;
+                            // Reset onTestFinished hooks for this test.
+                            globalThis.__bun_current_finally = [];
                             let result;
                             try {
                                 result = await (t.fn.length >= 1
@@ -197,6 +199,12 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             // afterEach: inner-most first (jest semantics).
                             for (let i = t.afterEach.length - 1; i >= 0; i--) {
                                 await runHook(t.afterEach[i]);
+                            }
+                            // onTestFinished hooks: run in order they
+                            // were registered, after afterEach.
+                            const finallyHooks = globalThis.__bun_current_finally || [];
+                            for (const h of finallyHooks) {
+                                try { await runHook(h); } catch {}
                             }
                             console.log("  ✓ " + fullName);
                             pass++;
