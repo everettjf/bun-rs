@@ -2191,6 +2191,7 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             crash_handler: { getMachOUUID: () => null, panic: () => {} },
             quickAndDirtyJavaScriptSyntaxHighlighter: (s) => String(s),
             highlighter: (s) => String(s),
+            highlightJavaScript: (s) => String(s),
             fs: {},
             jsc: {},
             shellInternals: {},
@@ -2206,6 +2207,12 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             BunStringToThreadSafe: (s) => s,
             toUTF16AllocSentinel: (s) => s,
             toUTF16Alloc: (s) => s,
+            stringsInternals: {
+                toUTF16AllocSentinel(buf) {
+                    return buf.toString("utf8");
+                },
+                toUTF16Alloc(buf) { return buf.toString("utf8"); },
+            },
             escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
             escapeHTML: globalThis.Bun ? globalThis.Bun.escapeHTML : (s) => s,
             fnGetMimeType: (_p) => "application/octet-stream",
