@@ -543,13 +543,37 @@ const BUN_HELPERS: &str = r#"
   };
   Bun.deepMatch = function (subset, sup) {
     if (subset === sup) return true;
-    if (typeof subset !== "object" || subset === null) return Object.is(subset, sup);
+    if (subset === null || subset === undefined) return Object.is(subset, sup);
+    if (typeof subset !== "object") return Object.is(subset, sup);
     if (typeof sup !== "object" || sup === null) return false;
+    // Functions / boxed primitives: false (Bun doesn't deep-match into them).
+    if (typeof subset === "function" || typeof sup === "function") return false;
     if (Array.isArray(subset)) {
       if (!Array.isArray(sup)) return false;
+      if (subset.length !== sup.length) return false;
       return subset.every((v, i) => Bun.deepMatch(v, sup[i]));
     }
-    return Object.keys(subset).every((k) => Bun.deepMatch(subset[k], sup[k]));
+    if (Array.isArray(sup)) return false;
+    // Maps / Sets / Dates / RegExps: equality by value.
+    if (subset instanceof Map && sup instanceof Map) {
+      if (subset.size !== sup.size) return false;
+      for (const [k, v] of subset) {
+        if (!sup.has(k) || !Bun.deepMatch(v, sup.get(k))) return false;
+      }
+      return true;
+    }
+    if (subset instanceof Set && sup instanceof Set) {
+      if (subset.size !== sup.size) return false;
+      for (const v of subset) if (!sup.has(v)) return false;
+      return true;
+    }
+    if (subset instanceof Date && sup instanceof Date) return subset.getTime() === sup.getTime();
+    if (subset instanceof RegExp && sup instanceof RegExp) return subset.toString() === sup.toString();
+    // Bun's deepMatch requires every key in `subset` to EXIST in `sup` (not
+    // just deep-equal), but `sup` may have extra keys.
+    return Object.keys(subset).every(
+      (k) => Object.prototype.hasOwnProperty.call(sup, k) && Bun.deepMatch(subset[k], sup[k])
+    );
   };
 
   // ── Bun.fileURLToPath / Bun.pathToFileURL ───────────────────────────
