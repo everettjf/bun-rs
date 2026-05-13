@@ -28,7 +28,14 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         obj.set_property("size", &Value::new_number(ctx, size as f64))
             .unwrap();
-        obj.set_property("type", &Value::new_string(ctx, &guess_type(&path)))
+        // Optional second-arg opts: { type } override.
+        let type_override: Option<String> = if args.len() >= 2 && args.get(1).is_object() {
+            args.get(1).to_object().ok()
+                .and_then(|o| o.get_property("type").ok())
+                .and_then(|v| if v.is_string() { Some(v.to_string()) } else { None })
+        } else { None };
+        let mime = type_override.unwrap_or_else(|| guess_type(&path));
+        obj.set_property("type", &Value::new_string(ctx, &mime))
             .unwrap();
 
         // Methods. Each captures `path` by clone.
@@ -195,7 +202,7 @@ fn guess_type(path: &str) -> String {
     let lower = path.to_lowercase();
     if lower.ends_with(".json") { return "application/json".into(); }
     if lower.ends_with(".html") || lower.ends_with(".htm") { return "text/html".into(); }
-    if lower.ends_with(".css") { return "text/css".into(); }
+    if lower.ends_with(".css") { return "text/css;charset=utf-8".into(); }
     if lower.ends_with(".js") || lower.ends_with(".mjs") { return "application/javascript".into(); }
     if lower.ends_with(".ts") || lower.ends_with(".tsx") { return "application/typescript".into(); }
     if lower.ends_with(".png") { return "image/png".into(); }
