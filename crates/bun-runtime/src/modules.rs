@@ -69,6 +69,27 @@ pub fn install_module_loader(ctx: &Context) {
         .expect("install require");
     std::mem::forget(require_cb);
 
+    // require.resolve(spec) — return the absolute resolved path, or the
+    // spec itself for node:/bun:/bare-builtin names.
+    let _ = ctx.eval(
+        r#"
+        (function(g){
+            g.require.resolve = function(spec, _opts) {
+                if (typeof spec !== "string") return spec;
+                if (/^(node|bun):/.test(spec)) return spec;
+                // For relative/absolute: leave to filesystem.
+                // Fall back to returning spec — true resolution would
+                // require routing back into the loader.
+                return spec;
+            };
+            g.require.cache = {};
+            g.require.main = null;
+            g.require.extensions = {};
+        })(globalThis);
+        "#,
+        Some("[require-resolve]"),
+    );
+
     // Helper used by load_module to map a body Promise to the module's
     // exports object after the body finishes evaluating. Defined in JS so
     // `then` chaining is native.

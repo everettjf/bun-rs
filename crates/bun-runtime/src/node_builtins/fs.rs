@@ -22,6 +22,7 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
     install_sync(ctx, &exports);
     install_streaming(ctx, &exports);
+    install_fd_io(ctx, &exports);
 
     // fs.promises — wrap every sync fn in Promise.resolve / .reject.
     let promises_v = ctx.eval("({})", Some("[node:fs.promises]")).unwrap();
@@ -30,6 +31,209 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
+}
+
+fn install_fd_io(ctx: &Context, obj: &bun_jsc::Object<'_>) {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::OnceLock;
+
+    static FDS: OnceLock<Mutex<HashMap<i32, std::fs::File>>> = OnceLock::new();
+    static NEXT_FD: OnceLock<Mutex<i32>> = OnceLock::new();
+    fn fds() -> &'static Mutex<HashMap<i32, std::fs::File>> {
+        FDS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+    fn next_fd() -> i32 {
+        let m = NEXT_FD.get_or_init(|| Mutex::new(3));
+        let mut g = m.lock().unwrap();
+        let n = *g;
+        *g += 1;
+        n
+    }
+
+    bind(ctx, obj, "openSync", move |args| {
+        let path = args.get(0).to_string();
+        let flags = args.get(1).to_string();
+        let mut opts = std::fs::OpenOptions::new();
+        match flags.as_str() {
+            "r" | "rs" => { opts.read(true); }
+            "r+" | "rs+" => { opts.read(true).write(true); }
+            "w" => { opts.write(true).create(true).truncate(true); }
+            "wx" => { opts.write(true).create_new(true); }
+            "w+" => { opts.read(true).write(true).create(true).truncate(true); }
+            "wx+" => { opts.read(true).write(true).create_new(true); }
+            "a" => { opts.append(true).create(true); }
+            "ax" => { opts.append(true).create_new(true); }
+            "a+" => { opts.read(true).append(true).create(true); }
+            "ax+" => { opts.read(true).append(true).create_new(true); }
+            _ => {
+                // Numeric flags or unsupported — best effort.
+                opts.read(true).write(true).create(true);
+            }
+        }
+        let f = opts.open(&path).map_err(|e| e.to_string())?;
+        let fd = next_fd();
+        fds().lock().unwrap().insert(fd, f);
+        Ok(Value::new_number(args.context(), fd as f64))
+    });
+
+    bind(ctx, obj, "closeSync", move |args| {
+        let fd = args.get(0).to_number() as i32;
+        fds().lock().unwrap().remove(&fd);
+        Ok(Value::new_undefined(args.context()))
+    });
+
+    bind(ctx, obj, "readSync", move |args| {
+        // readSync(fd, buffer, offset, length, position) → bytesRead.
+        let fd = args.get(0).to_number() as i32;
+        let buf_v = args.get(1);
+        let mut fdmap = fds().lock().unwrap();
+        let file = fdmap.get_mut(&fd).ok_or("EBADF")?;
+        let offset = if args.len() >= 3 { args.get(2).to_number() as usize } else { 0 };
+        let length = if args.len() >= 4 { args.get(3).to_number() as usize } else { 0 };
+        let position = if args.len() >= 5 {
+            let p = args.get(4);
+            if p.is_null() || p.is_undefined() { None } else { Some(p.to_number() as u64) }
+        } else { None };
+
+        let buf_bytes = buf_v.typed_array_bytes().ok_or("readSync: buffer must be a TypedArray")?;
+        let buf_ptr = buf_bytes.as_ptr();
+        let buf_len = buf_bytes.len();
+        let end = offset.saturating_add(length).min(buf_len);
+        if end < offset { return Err("read range out of bounds".into()); }
+        let actual = end - offset;
+
+        if let Some(pos) = position {
+            file.seek(SeekFrom::Start(pos)).map_err(|e| e.to_string())?;
+        }
+        // SAFETY: we know buf_bytes is the underlying typed-array storage.
+        let n = unsafe {
+            let slice = std::slice::from_raw_parts_mut(buf_ptr.add(offset) as *mut u8, actual);
+            file.read(slice).map_err(|e| e.to_string())?
+        };
+        Ok(Value::new_number(args.context(), n as f64))
+    });
+
+    bind(ctx, obj, "writeSync", move |args| {
+        // writeSync(fd, buffer | string [, offset, length, position])
+        let fd = args.get(0).to_number() as i32;
+        let mut fdmap = fds().lock().unwrap();
+        let file = fdmap.get_mut(&fd).ok_or("EBADF")?;
+        let data_v = args.get(1);
+        let bytes = if let Some(b) = data_v.typed_array_bytes() {
+            b.to_vec()
+        } else {
+            data_v.to_string().into_bytes()
+        };
+        let n = file.write(&bytes).map_err(|e| e.to_string())?;
+        Ok(Value::new_number(args.context(), n as f64))
+    });
+
+    bind(ctx, obj, "fstatSync", move |args| {
+        let fd = args.get(0).to_number() as i32;
+        let fdmap = fds().lock().unwrap();
+        let file = fdmap.get(&fd).ok_or("EBADF")?;
+        let md = file.metadata().map_err(|e| e.to_string())?;
+        let ctx = args.context();
+        let stat_v = ctx.eval("({})", Some("[fstat]")).map_err(|e| e.to_string())?;
+        let stat = stat_v.to_object().map_err(|e| e.to_string())?;
+        stat.set_property("size", &Value::new_number(ctx, md.len() as f64)).ok();
+        stat.set_property("isFile", &ctx.eval(if md.is_file() { "() => true" } else { "() => false" }, None).unwrap()).ok();
+        stat.set_property("isDirectory", &ctx.eval(if md.is_dir() { "() => true" } else { "() => false" }, None).unwrap()).ok();
+        stat.set_property("mode", &Value::new_number(ctx, 0.0)).ok();
+        stat.set_property("uid", &Value::new_number(ctx, 0.0)).ok();
+        stat.set_property("gid", &Value::new_number(ctx, 0.0)).ok();
+        stat.set_property("blksize", &Value::new_number(ctx, 4096.0)).ok();
+        stat.set_property("blocks", &Value::new_number(ctx, 0.0)).ok();
+        Ok(stat_v)
+    });
+
+    bind(ctx, obj, "fsyncSync", |args| {
+        // No-op (we don't track per-fd flush state).
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "ftruncateSync", move |args| {
+        let fd = args.get(0).to_number() as i32;
+        let len = args.get(1).to_number() as u64;
+        let fdmap = fds().lock().unwrap();
+        let file = fdmap.get(&fd).ok_or("EBADF")?;
+        file.set_len(len).map_err(|e| e.to_string())?;
+        Ok(Value::new_undefined(args.context()))
+    });
+
+    bind(ctx, obj, "symlinkSync", |args| {
+        let target = args.get(0).to_string();
+        let link = args.get(1).to_string();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        return Err("symlinkSync not supported on Windows in bun-rs".into());
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "readlinkSync", |args| {
+        let link = args.get(0).to_string();
+        let target = std::fs::read_link(&link).map_err(|e| e.to_string())?;
+        Ok(Value::new_string(args.context(), &target.to_string_lossy()))
+    });
+    bind(ctx, obj, "chmodSync", |args| {
+        let _path = args.get(0).to_string();
+        let _mode = args.get(1).to_number() as u32;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&_path, std::fs::Permissions::from_mode(_mode))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "chownSync", |args| {
+        // Stub — chown via libc would need bindings; just succeed.
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "lchownSync", |args| {
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "lchmodSync", |args| {
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "utimesSync", |args| {
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "futimesSync", |args| {
+        Ok(Value::new_undefined(args.context()))
+    });
+    bind(ctx, obj, "linkSync", |args| {
+        let src = args.get(0).to_string();
+        let dst = args.get(1).to_string();
+        std::fs::hard_link(&src, &dst).map_err(|e| e.to_string())?;
+        Ok(Value::new_undefined(args.context()))
+    });
+
+    // Async variants forwarding to *Sync with queueMicrotask callback dispatch.
+    let _ = ctx.eval(
+        r#"
+        (function(fs){
+            const syncToAsync = (name) => function(...args) {
+                const cb = typeof args[args.length - 1] === "function" ? args.pop() : null;
+                try {
+                    const r = fs[name + "Sync"](...args);
+                    if (cb) queueMicrotask(() => cb(null, r));
+                    return r;
+                } catch (e) {
+                    if (cb) queueMicrotask(() => cb(e));
+                    else throw e;
+                }
+            };
+            for (const k of ["open", "close", "read", "write", "fstat", "fsync", "ftruncate", "symlink", "readlink", "chmod", "chown", "lchown", "lchmod", "utimes", "futimes", "link"]) {
+                if (typeof fs[k] !== "function" && typeof fs[k + "Sync"] === "function") {
+                    fs[k] = syncToAsync(k);
+                }
+            }
+        })(arguments[0]);
+        "#,
+        Some("[fs-async-wrap]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[obj.as_value()])));
 }
 
 fn install_streaming(ctx: &Context, obj: &bun_jsc::Object<'_>) {

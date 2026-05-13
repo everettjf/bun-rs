@@ -210,6 +210,56 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
     proc.set_property("kill", &kill_cb.value_in(ctx)).ok();
     std::mem::forget(kill_cb);
 
+    // process.chdir(dir) — change cwd.
+    let chdir_cb = Callback::new(ctx, "chdir", |args| {
+        let ctx = args.context();
+        let dir = args.get(0).to_string();
+        std::env::set_current_dir(&dir).map_err(|e| e.to_string())?;
+        Ok(Value::new_undefined(ctx))
+    });
+    proc.set_property("chdir", &chdir_cb.value_in(ctx)).ok();
+    std::mem::forget(chdir_cb);
+
+    // process.getuid / .getgid / .getpid (stubs / real where easy).
+    let getuid = Callback::new(ctx, "getuid", |args| {
+        // Real getuid via libc would need bindings; return 1000 as a stable stub.
+        Ok(Value::new_number(args.context(), 1000.0))
+    });
+    proc.set_property("getuid", &getuid.value_in(ctx)).ok();
+    std::mem::forget(getuid);
+    let getgid = Callback::new(ctx, "getgid", |args| {
+        Ok(Value::new_number(args.context(), 1000.0))
+    });
+    proc.set_property("getgid", &getgid.value_in(ctx)).ok();
+    std::mem::forget(getgid);
+
+    // process.binding / .dlopen / .reallyExit — stubs.
+    let _ = ctx.eval(
+        r#"
+        (function(p){
+            p.binding = (_name) => ({});
+            p.dlopen = () => { throw new Error("process.dlopen not implemented"); };
+            p.reallyExit = (code) => process.exit(code || 0);
+            p.abort = () => process.exit(134);
+            p.allowedNodeEnvironmentFlags = new Set();
+            p.config = { variables: {}, target_defaults: {} };
+            p.connected = false;
+            p.debugPort = 9229;
+            p.execArgv = [];
+            p.execPath = process.argv[0] || "bun-rs";
+            p.features = { ipv6: true, tls: true };
+            p.openStdin = () => process.stdin;
+            p.report = { directory: "", filename: "", reportOnFatalError: false, reportOnSignal: false, reportOnUncaughtException: false, signal: "SIGUSR2", getReport: () => "{}", writeReport: () => "" };
+            p.resourceUsage = () => ({ userCPUTime: 0, systemCPUTime: 0, maxRSS: 0, sharedMemorySize: 0, unsharedDataSize: 0, unsharedStackSize: 0, minorPageFault: 0, majorPageFault: 0, swappedOut: 0, fsRead: 0, fsWrite: 0, ipcSent: 0, ipcReceived: 0, signalsCount: 0, voluntaryContextSwitches: 0, involuntaryContextSwitches: 0 });
+            p.send = () => false;
+            p.disconnect = () => {};
+            p.title = "bun-rs";
+            if (!p.release) p.release = { name: "bun-rs", sourceUrl: "", headersUrl: "", libUrl: "" };
+        })(globalThis.process);
+        "#,
+        Some("[process-extras]"),
+    );
+
     // EventEmitter-style stubs: on/off/emit/once/removeListener/addListener.
     ctx.eval(
         r#"

@@ -83,6 +83,14 @@ pub fn install_bun(ctx: &Context) {
         Ok(Value::new_undefined(args.context()))
     });
 
+    bind(ctx, &bun, "sleepSync", |args| {
+        let ms = if args.len() >= 1 { args.get(0).to_number() } else { 0.0 };
+        if ms.is_finite() && ms > 0.0 {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        }
+        Ok(Value::new_undefined(args.context()))
+    });
+
     bind(ctx, &bun, "env", |args| {
         // Same shape as process.env — populated lazily so users get fresh
         // values if they mutate process.env (rare but defined).

@@ -33,6 +33,17 @@ const POLYFILL: &str = r#"
   // JSC versions before 7619 don't expose Symbol.dispose / Symbol.asyncDispose
   // as well-known symbols. Polyfill them with registered symbols so user code
   // using `[Symbol.dispose]() { ... }` ends up with the same key everywhere.
+  // Polyfill SuppressedError as a global if JSC doesn't expose it.
+  if (typeof globalThis.SuppressedError !== "function") {
+    globalThis.SuppressedError = function SuppressedError(error, suppressed, message) {
+      const e = new Error(message || "");
+      e.name = "SuppressedError";
+      e.error = error;
+      e.suppressed = suppressed;
+      return e;
+    };
+  }
+
   if (typeof Symbol.dispose !== "symbol") {
     Object.defineProperty(Symbol, "dispose", {
       value: Symbol.for("Symbol.dispose"),

@@ -112,6 +112,71 @@ pub fn install_timers(ctx: &Context) {
         .set_property("setImmediate", &set_immediate.value_in(ctx))
         .unwrap();
     std::mem::forget(set_immediate);
+
+    // Wrap the raw-id returning setTimeout/setInterval/setImmediate in
+    // small handle objects with .ref / .unref / .refresh / hasRef, which is
+    // what Bun and Node return. The handle is still numerically coercible
+    // (via Symbol.toPrimitive) so clearTimeout(handle) still works.
+    let _ = ctx.eval(
+        r#"
+        (function (g) {
+            class TimerHandle {
+                constructor(id, fn, args, ms, isInterval) {
+                    this._id = id;
+                    this._fn = fn;
+                    this._args = args;
+                    this._ms = ms;
+                    this._isInterval = isInterval;
+                }
+                unref() { return this; }
+                ref() { return this; }
+                hasRef() { return true; }
+                refresh() {
+                    if (this._fn) {
+                        g.clearTimeout(this._id);
+                        const nextId = this._isInterval
+                            ? __rawSetInterval(this._fn, this._ms, ...this._args)
+                            : __rawSetTimeout(this._fn, this._ms, ...this._args);
+                        this._id = nextId;
+                    }
+                    return this;
+                }
+                close() { g.clearTimeout(this._id); }
+                [Symbol.dispose]() { g.clearTimeout(this._id); }
+                [Symbol.toPrimitive]() { return this._id; }
+                valueOf() { return this._id; }
+                toString() { return String(this._id); }
+            }
+
+            const __rawSetTimeout = g.setTimeout;
+            const __rawSetInterval = g.setInterval;
+            const __rawSetImmediate = g.setImmediate;
+            const __rawClearTimeout = g.clearTimeout;
+
+            g.setTimeout = function (fn, ms, ...args) {
+                const wrapped = args.length === 0 ? fn : (() => fn(...args));
+                const id = __rawSetTimeout(wrapped, ms);
+                return new TimerHandle(id, fn, args, ms, false);
+            };
+            g.setInterval = function (fn, ms, ...args) {
+                const wrapped = args.length === 0 ? fn : (() => fn(...args));
+                const id = __rawSetInterval(wrapped, ms);
+                return new TimerHandle(id, fn, args, ms, true);
+            };
+            g.setImmediate = function (fn, ...args) {
+                const wrapped = args.length === 0 ? fn : (() => fn(...args));
+                const id = __rawSetImmediate(wrapped);
+                return new TimerHandle(id, fn, args, 0, false);
+            };
+            g.clearTimeout = function (h) {
+                __rawClearTimeout(h && typeof h === "object" && "_id" in h ? h._id : h);
+            };
+            g.clearInterval = g.clearTimeout;
+            g.clearImmediate = g.clearTimeout;
+        })(globalThis);
+        "#,
+        Some("[timers-wrap]"),
+    );
 }
 
 // ── Timer registry ───────────────────────────────────────────────────────────
