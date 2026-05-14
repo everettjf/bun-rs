@@ -420,11 +420,27 @@ const BUN_HELPERS: &str = r##"
       if (text === null) throw new TypeError("Bun.JSONL.parse: input must be a string");
       if (text === undefined) throw new TypeError("Bun.JSONL.parse: input must be a string");
       let s;
-      if (typeof text === "string") s = text;
-      else if (text instanceof Uint8Array) s = new TextDecoder("utf-8").decode(text);
-      else if (text instanceof ArrayBuffer) s = new TextDecoder("utf-8").decode(new Uint8Array(text));
-      else if (ArrayBuffer.isView(text)) s = new TextDecoder("utf-8").decode(new Uint8Array(text.buffer, text.byteOffset, text.byteLength));
-      else s = String(text);
+      // Reject inputs over 1 GB to match Bun's allocator-aware behavior.
+      function checkSize(bytes) {
+        if (bytes > 1024 * 1024 * 1024) {
+          throw new RangeError("Bun.JSONL.parse: input too large");
+        }
+      }
+      if (typeof text === "string") {
+        checkSize(text.length);
+        s = text;
+      } else if (text instanceof Uint8Array) {
+        checkSize(text.byteLength);
+        s = new TextDecoder("utf-8").decode(text);
+      } else if (text instanceof ArrayBuffer) {
+        checkSize(text.byteLength);
+        s = new TextDecoder("utf-8").decode(new Uint8Array(text));
+      } else if (ArrayBuffer.isView(text)) {
+        checkSize(text.byteLength);
+        s = new TextDecoder("utf-8").decode(new Uint8Array(text.buffer, text.byteOffset, text.byteLength));
+      } else {
+        s = String(text);
+      }
       const out = [];
       if (s.length === 0) return out;
       // Split into lines first (respecting string quoting on \n).
