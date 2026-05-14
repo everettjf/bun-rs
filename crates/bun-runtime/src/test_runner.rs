@@ -99,7 +99,8 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
         // Reset the JS-side collector for each file. Also reset Bun.main and
         // set process.argv[1] so the file's Bun.main reflects this test file.
         let reset_script = format!(
-            "globalThis.__bun_test_collector = []; globalThis.__bun_has_only = false; globalThis.__bun_main_override = undefined; process.argv[1] = {};",
+            "globalThis.__bun_test_collector = []; globalThis.__bun_has_only = false; globalThis.__bun_main_override = undefined; process.argv[1] = {}; globalThis.__bun_current_test_file = {};",
+            serde_json::to_string(&file.to_string_lossy().to_string()).unwrap_or_else(|_| "\"\"".to_string()),
             serde_json::to_string(&file.to_string_lossy().to_string()).unwrap_or_else(|_| "\"\"".to_string())
         );
         let _ = rt.ctx.eval(&reset_script, Some("[test-reset]"));
@@ -1043,12 +1044,9 @@ const GLOBALS: &str = r#"
         const a = args[0];
         const b = args[1];
         if (a !== undefined && typeof a === "object" && a !== null && !Array.isArray(a)) {
-          // Property-matcher form.
           if (received === null || typeof received !== "object") {
             throw new TypeError("Received value must be an object");
           }
-          // Recursively check matcher tree. Each value either deepEq-matches
-          // or is an asymmetric matcher (expect.any/anything/etc.).
           function matchTree(m, v, path) {
             if (m && typeof m === "object" && m.__bun_match && typeof m.asymmetricMatch === "function") {
               if (!m.asymmetricMatch(v)) {
@@ -1074,7 +1072,22 @@ const GLOBALS: &str = r#"
         if (b !== undefined && typeof b !== "string") {
           throw new TypeError("toMatchSnapshot: snapshot name must be a string");
         }
-        /* otherwise always pass */
+        // Write snapshot file on first run so the directory + file exist.
+        try {
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const testFile = globalThis.__bun_current_test_file;
+          if (testFile) {
+            const dir = path.dirname(testFile);
+            const snapsDir = path.join(dir, "__snapshots__");
+            const base = path.basename(testFile);
+            const snapFile = path.join(snapsDir, base + ".snap");
+            if (!fs.existsSync(snapsDir)) fs.mkdirSync(snapsDir, { recursive: true });
+            if (!fs.existsSync(snapFile)) {
+              fs.writeFileSync(snapFile, "// Bun Snapshot v1, https://bun.com/docs/cli/snapshots\n");
+            }
+          }
+        } catch {}
       },
       toMatchInlineSnapshot(...args) {
         if (!g.__bun_test_running) {
