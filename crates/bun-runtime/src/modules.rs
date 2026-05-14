@@ -804,6 +804,12 @@ fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>>
             version: "18.3.1",
             default: { createElement: (...a) => ({ type: a[0], props: { ...a[1], children: a.slice(2) } }), Fragment: Symbol.for("react.fragment") },
         })"#),
+        "svelte" | "svelte/server" | "svelte/compiler" | "svelte/internal" | "svelte/store" => Some(r#"({
+            __esModule: true,
+            version: "5.0.0",
+            render: () => ({ html: "", css: { code: "" }, head: "" }),
+            compile: (source) => ({ js: { code: source }, css: { code: "" } }),
+        })"#),
         "react-dom" | "react-dom/server" | "react-dom/server.browser" | "react-dom/client" | "react-dom/server.node" => Some(r#"({
             __esModule: true,
             version: "18.3.0",
