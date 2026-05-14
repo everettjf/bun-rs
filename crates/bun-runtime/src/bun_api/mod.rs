@@ -2100,12 +2100,86 @@ const BUN_HELPERS: &str = r##"
   Bun.MD4 = _makeStaticHasher("md4", 16);
   Bun.MD5 = _makeStaticHasher("md5", 16);
 
-  Bun.password = {
-    hash: async (pw, _opts) => "$bun-rs-stub$" + pw,
-    hashSync: (pw, _opts) => "$bun-rs-stub$" + pw,
-    verify: async (pw, h, _alg) => h === "$bun-rs-stub$" + pw,
-    verifySync: (pw, h, _alg) => h === "$bun-rs-stub$" + pw,
-  };
+  Bun.password = (function () {
+    function coercePw(pw) {
+      if (pw === null || pw === undefined) throw new TypeError("password must be a string, Buffer, or TypedArray");
+      if (typeof pw === "string") {
+        if (pw.length === 0) throw new TypeError("password must not be empty");
+        return pw;
+      }
+      if (pw instanceof ArrayBuffer) pw = new Uint8Array(pw);
+      if (ArrayBuffer.isView(pw)) {
+        if (pw.byteLength === 0) throw new TypeError("password must not be empty");
+        // Convert to UTF-8 string for hashing.
+        const u8 = pw instanceof Uint8Array ? pw : new Uint8Array(pw.buffer, pw.byteOffset, pw.byteLength);
+        return new TextDecoder("utf-8").decode(u8);
+      }
+      throw new TypeError("password must be a string, Buffer, or TypedArray");
+    }
+    function pickAlgo(opts) {
+      if (typeof opts === "string") return opts;
+      if (opts && typeof opts === "object" && opts.algorithm) return opts.algorithm;
+      if (opts == null) return "argon2id";
+      throw new TypeError("password options must be a string algorithm name or an options object");
+    }
+    function hashSync(pw, opts) {
+      pw = coercePw(pw);
+      const algo = pickAlgo(opts);
+      if (algo !== "bcrypt" && algo !== "argon2id" && algo !== "argon2i" && algo !== "argon2d") {
+        throw new TypeError("password algorithm must be argon2id, argon2i, argon2d, or bcrypt");
+      }
+      // Use HMAC-SHA256 with random salt as a portable stand-in (not real argon2/bcrypt).
+      const c = require("node:crypto");
+      const salt = c.randomBytes(16).toString("hex");
+      const h = c.createHmac("sha256", salt).update(pw).digest("hex");
+      return `$${algo}$v=1$s=${salt}$${h}`;
+    }
+    function _verifyInner(pw, hash, _algo) {
+      if (typeof hash !== "string") return false;
+      pw = coercePw(pw);
+      const m = hash.match(/^\$([a-z0-9]+)\$v=\d+\$s=([0-9a-f]+)\$([0-9a-f]+)$/i);
+      if (!m) return false;
+      const c = require("node:crypto");
+      const got = c.createHmac("sha256", m[2]).update(pw).digest("hex");
+      return got === m[3];
+    }
+    return {
+      // Note: argument validation happens SYNCHRONOUSLY (Bun semantics) so
+      // a missing/empty password throws before returning a Promise.
+      hash(pw, opts) {
+        pw = coercePw(pw);
+        const algo = pickAlgo(opts);
+        if (algo !== "bcrypt" && algo !== "argon2id" && algo !== "argon2i" && algo !== "argon2d") {
+          throw new TypeError("password algorithm must be argon2id, argon2i, argon2d, or bcrypt");
+        }
+        return Promise.resolve().then(() => hashSync(pw, algo));
+      },
+      hashSync,
+      verify(pw, h, algo) {
+        if (arguments.length < 2) throw new TypeError("password and hash are required");
+        // Empty inputs → return false, don't throw.
+        if (pw === "" || h === "") return Promise.resolve(false);
+        if (typeof h !== "string") return Promise.resolve(false);
+        if (algo !== undefined && algo !== null && typeof algo === "string"
+          && algo !== "bcrypt" && algo !== "argon2id" && algo !== "argon2i" && algo !== "argon2d") {
+          throw new TypeError("password algorithm must be argon2id, argon2i, argon2d, or bcrypt");
+        }
+        return Promise.resolve().then(() => _verifyInner(pw, h, algo));
+      },
+      verifySync(pw, h, algo) {
+        if (arguments.length < 2) throw new TypeError("password and hash are required");
+        if (pw === "" || h === "") return false;
+        if (typeof h !== "string") return false;
+        if (ArrayBuffer.isView(pw) && pw.byteLength === 0) return false;
+        if (pw instanceof ArrayBuffer && pw.byteLength === 0) return false;
+        if (algo !== undefined && algo !== null && typeof algo === "string"
+          && algo !== "bcrypt" && algo !== "argon2id" && algo !== "argon2i" && algo !== "argon2d") {
+          throw new TypeError("password algorithm must be argon2id, argon2i, argon2d, or bcrypt");
+        }
+        return _verifyInner(pw, h, algo);
+      },
+    };
+  })();
   Bun.FileSystemRouter = class FileSystemRouter {
     constructor(opts) { this.dir = opts.dir; this.style = opts.style; this.routes = {}; }
     match(_url) { return null; }
