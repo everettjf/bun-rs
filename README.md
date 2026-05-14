@@ -1,33 +1,36 @@
 # bun-rs
 
-> **⚠️ This is an experimental hobby project. It is not production-ready and is very rough around the edges.**
+> ⚠️ **Experimental hobby project — very rough, very incomplete.**
 >
-> The goal is to fully rewrite Bun in Rust as a personal toy project.
-> (Note: the [official Bun project](https://github.com/oven-sh/bun) was itself rewritten from Zig to Rust — this repo
-> is unrelated to that effort and exists purely for fun and learning.)
+> The goal is to fully rewrite [Bun](https://github.com/oven-sh/bun) in Rust.
+> (Yes, the official Bun project has already rewritten itself in Rust — this repo is unrelated to that effort and exists purely as a personal toy / for-fun project.)
 >
-> See [`docs/capabilities.md`](docs/capabilities.md) for a candid breakdown of what does and does
-> not work today.
+> Start here:
+> - [`docs/capabilities.md`](docs/capabilities.md) — what works today, what's a stub, what throws
+> - [`docs/tutorial.md`](docs/tutorial.md) — runnable walk-through of the things that actually work
 
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** experimental — Bun's official test suite under `test/js/bun` passes
-~38.9 % of files (159 / 409) as of the last run. Many APIs exist as best-effort
-stubs that pass shape checks but skip the real implementation (e.g. argon2,
-real TCP/UDP, JIT, snapshot file diffing).
+**Where it stands:** Bun's official `test/js/bun` file-level suite passes
+**159 / 409 (38.9 %)** as of the last run. The core JS runtime (TS + ESM
++ event loop + fetch + Bun.serve + Bun.file + test runner) is solid; lots
+of surface (raw TCP, real argon2, real DNS, worker threads, server-side
+WebSocket) is intentionally a stub or simply missing.
 
-What you get out of the box:
-- `bun-rs run app.ts` — TypeScript + full ESM (static + dynamic
-  `import()` + top-level `await` + `node_modules` + CJS interop)
-- `bun-rs test` — Jest-style test runner
-- `bun-rs build app.ts -o out.js` — single-file bundler
-- `bun-rs install` — npm package installer
-- HTTP / HTTPS / HTTP/2 server (`Bun.serve` + `node:http`)
-- `WebSocket`, `fetch`, `URL`, `Buffer`, full WHATWG Streams
-- Threading via `Worker`
-- `bun:sqlite` + `bun:ffi`
-- Common `node:*` modules: fs/path/os/buffer/events/util/crypto/
-  child_process/assert/querystring/url/stream/readline/zlib/http
+What you can actually do with it today:
+
+- `bun-rs run app.ts` — TypeScript + ESM (static + dynamic `import()` +
+  top-level `await` + `node_modules` + CJS interop)
+- `bun-rs test` — Jest-style runner with `expect` matchers,
+  `jest.fn`, `jest.useFakeTimers`, `jest.setSystemTime`
+- `bun-rs build app.ts -o out.js` — single-file bundler (no tree shake / plugins)
+- `bun-rs install` — npm package installer (loose semver, no lockfile)
+- HTTP / HTTPS server via `Bun.serve` (+ `node:http`)
+- `fetch`, `URL`, `Buffer`, WebSocket **client**, AbortController, full WHATWG Streams
+- `bun:sqlite`, `bun:ffi` (primitives only)
+- `node:` modules: fs (sync + real-async promises) / path / os / buffer /
+  events / util / crypto / child_process / assert / querystring / url /
+  stream / readline / zlib / http
 
 See:
 
@@ -106,7 +109,7 @@ cargo build --release
 
 ### `Bun.*` namespace
 
-- **`Bun.serve({ port, fetch, tls? })`** — concurrent HTTP / HTTPS / HTTP/2 (hyper, tokio per-request, ALPN-negotiated)
+- **`Bun.serve({ port, fetch, tls? })`** — concurrent HTTP / HTTPS via hyper, tokio per-request (HTTP/2 server is **not** implemented)
 - **`Bun.file(path)`** — Blob-like with `text()` / `json()` / `bytes()` / `arrayBuffer()` / `exists()` / `size` / `name` / `type`
 - `Bun.write(path, data)`
 - `Bun.sleep(ms)`
@@ -121,20 +124,61 @@ cargo build --release
 
 See [`docs/build.md`](docs/build.md).
 
-## Known limitations (1.0 deliberate scope)
+## What's not supported (yet)
+
+Where bun-rs is **today: 159 / 409 file-level tests pass in Bun's own
+`test/js/bun` suite (38.9 %).** The remaining 61 % breaks down into
+three categories: deliberately stubbed surfaces, partial implementations,
+and small edge-case gaps. The big-ticket items:
+
+### Throws or returns a stub — don't reach for these
+
+- **Raw networking** — `node:net`, `node:tls`, `node:dgram`, `Bun.listen`,
+  `Bun.connect` (all shape stubs that throw on real I/O).
+- **Workers** — `Worker` (global), `node:worker_threads` both throw.
+  `Bun.isMainThread` is always `true`.
+- **WebSocket server upgrade** in `Bun.serve` — only the client is real.
+- **Real DNS** — `node:dns.lookup` always returns `127.0.0.1` / `::1`.
+- **Real password hashing** — `Bun.password.hash` / `.verify` use
+  HMAC-SHA256 under the hood, **not argon2 or bcrypt**. Compatible API,
+  incompatible bytes.
+- **`Bun.SQL`, `Bun.RedisClient`, `Bun.Image`, `Bun.FileSystemRouter`,
+  `Bun.S3Client`** — surface only or throw.
+- **HTTP/2 server**, **Unix-domain sockets** — not implemented.
+- **`bun build --compile`** (compile-to-binary) — not implemented.
+- **Windows** — no public JSC build (would need to compile WebKit).
+
+### Behaves but lies on the edges
 
 - **Live ESM bindings** — `import { x }` is a value snapshot at load
-  time, not a live binding (matters only for circular dependencies)
+  time, not a live binding (matters only for circular dependencies).
 - **`fetch` AbortSignal** fires at request setup; doesn't interrupt
-  mid-stream
-- **`bun-rs install`** does loose semver (^/~ stripped to exact);
-  reliable for pinned and `latest`, hit-and-miss for ranges
-- **`Worker`** doesn't support SharedArrayBuffer / transferables /
-  nesting; messages travel as JSON
-- **Sourcemap stacks** map lines, not columns; JSX-heavy files may drift
-- **macOS + Linux only** — no Windows JSC build available
-- **WebSocket** is client-only (server upgrade in `Bun.serve` TBD)
-- **shell / SQL beyond bun:sqlite / bake / cluster** — out of scope
+  mid-stream.
+- **`Bun.spawn` stdin** — `proc.stdin` (Writable) is not exposed. Use
+  `Bun.spawnSync({ input: ... })`.
+- **Import attributes** — only `with { type: "json" }` works. `yaml`,
+  `text`, `toml` aren't threaded to the loader; use the file extension.
+- **Sourcemap stacks** map lines, not columns; JSX-heavy files may drift.
+- **Stack-trace format** — JSC's `name@url:line:col`, not V8's
+  `at name (url:line:col)`. Tests that grep for V8 format won't match.
+- **Snapshot testing** — `toMatchSnapshot` creates files on first call
+  but never diffs or rewrites them.
+- **`mock.module`** cache invalidation — only works if hooked before the
+  first import of the module.
+- **`bun-rs install`** does loose semver (`^` / `~` stripped to exact);
+  no lockfile, no peer deps, no workspaces.
+- **CLI gaps** — `bun-rs init`, `add`, `remove`, `upgrade`,
+  `run <script>`, `--inspect`, `--watch` are not implemented.
+
+### Deliberate non-goals
+
+- JIT tier optimisation (Baseline / DFG / FTL) — we use stock JSC.
+- Bun's own shell parser (we exec via system `sh -c`).
+- Worker-thread JSC isolates with shared state.
+- Bun's own bundler / minifier / CSS pipeline.
+
+See [`docs/capabilities.md`](docs/capabilities.md) for the full per-API
+table and [`docs/roadmap.md`](docs/roadmap.md) for what's planned next.
 
 ## Layout
 

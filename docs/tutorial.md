@@ -1,20 +1,22 @@
 # bun-rs tutorial
 
-A 30-minute walk-through. Each step is something you can paste into a
-terminal and run.
+Twelve runnable steps showing what bun-rs can actually do today.
+Each block is something you can paste into a terminal.
 
-> Heads-up: bun-rs is an experimental hobby project. The features shown
-> here all work as written, but anything beyond them may throw, return a
-> stub, or behave subtly differently from real Bun. See
-> [`capabilities.md`](capabilities.md) for the honest list.
+> ⚠️ bun-rs is an **experimental hobby project**. The features in this
+> tutorial all work as written. **Anything you reach for outside this
+> tutorial may throw, return a stub, or behave subtly differently from
+> real Bun.** See [`capabilities.md`](capabilities.md) before betting on
+> anything.
 
-## 0. Install
+## 0. Build
 
 You need:
-- macOS (any Apple Silicon or Intel) — `JavaScriptCore.framework` ships
-  with the OS, no extra dependency.
-- A recent Rust nightly (we pin one in `rust-toolchain.toml`, rustup will
-  pull it automatically the first time you build).
+
+- **macOS** — `JavaScriptCore.framework` ships with the OS. No extra deps.
+- *or* **Linux** — `apt install libjavascriptcoregtk-4.1-dev` (lightly tested).
+- A recent Rust nightly. We pin one in `rust-toolchain.toml`; rustup will
+  fetch it automatically the first time you build.
 
 ```sh
 git clone https://github.com/everettjf/bun-rs
@@ -22,76 +24,65 @@ cd bun-rs
 cargo build --release
 ```
 
-The binary ends up at `target/release/bun-rs` (about 3.5 MB). Add a shell
-alias if you want:
+Binary lands at `target/release/bun-rs` (~3.5 MB). Convenience alias:
 
 ```sh
 alias bunrs="$(pwd)/target/release/bun-rs"
-```
-
-Confirm it works:
-
-```sh
-bunrs --version       # bare version number, e.g. 1.0.3
+bunrs --version
 bunrs -p "1 + 1"      # 2
 ```
 
+Everything below assumes `bunrs` is on your path.
+
 ## 1. Hello world
 
+Two ways to evaluate inline:
+
 ```sh
-bunrs -e "console.log('hello from bun-rs')"
+bunrs -e "console.log('hello from bun-rs')"   # prints the message
+bunrs -p "1 + 2 * 3"                          # 7  (prints the value too)
 ```
 
-`-e` evaluates an inline snippet. `-p` is the same but also prints the
-expression's value (Node convention).
+`-e` evaluates a snippet. `-p` does the same and prints the result. Both
+wrap your snippet in an async IIFE, so top-level `await` works:
+
+```sh
+bunrs -e "const r = await fetch('https://example.com'); console.log(r.status)"
+```
 
 ## 2. Run a TypeScript file
 
 Create `hello.ts`:
 
 ```ts
-interface Greeting {
-  who: string;
-  count: number;
-}
-
-function greet(g: Greeting): string {
-  return `hello ${g.who} × ${g.count}`;
-}
+interface Greeting { who: string; count: number }
+const greet = ({ who, count }: Greeting) => `hello ${who} × ${count}`;
 
 for (const g of [
   { who: "world", count: 1 },
-  { who: "JSC", count: 2 },
-  { who: "Rust", count: 3 },
-]) {
-  console.log(greet(g));
-}
+  { who: "JSC",   count: 2 },
+  { who: "Rust",  count: 3 },
+]) console.log(greet(g));
 ```
 
 ```sh
-bunrs run hello.ts
-# or just
-bunrs hello.ts
+bunrs hello.ts          # equivalent to: bunrs run hello.ts
 ```
 
-Types are stripped by [oxc](https://oxc.rs/); the JS is then evaluated by
-JavaScriptCore.
+Types are stripped by [oxc](https://oxc.rs/); the resulting JS is
+evaluated by JavaScriptCore.
 
-## 3. Multi-file ESM project
-
-Create three files:
+## 3. Multi-file ESM
 
 ```ts
 // math.ts
 export const PI = 3.14;
-export function add(a: number, b: number) { return a + b; }
+export function add(a: number, b: number) { return a + b }
 ```
 
 ```ts
 // greet.ts
-export function greet(who: string) {
-  return "hello, " + who;
-}
+export const greet = (who: string) => `hello, ${who}`;
 ```
 
 ```ts
@@ -108,36 +99,34 @@ bunrs app.ts
 ```
 
 All ESM forms work: named imports, default, `import * as`, renamed
-(`import { a as b }`), `export * from`, `export { x } from`.
+(`import { a as b }`), `export * from`, `export { x } from`, `export *
+as ns from`.
 
-### Dynamic import / top-level await
+## 4. Dynamic import + top-level await + `import.meta`
 
 ```ts
 // dyn.ts
 console.log("before");
 const m = await import("./math");
 console.log("after", m.PI);
+
+console.log(import.meta.url);       // file:///abs/path/dyn.ts
+console.log(import.meta.dirname);   // /abs/path
+console.log(import.meta.filename);  // /abs/path/dyn.ts
 ```
 
 ```sh
 bunrs dyn.ts
 ```
 
-`await` at module top-level works because bun-rs wraps every module in an
-`async function`.
+`await` at module top-level works because bun-rs wraps every module in
+an `async function`. Dynamic `import()` resolves the same way static
+imports do — `node_modules` lookup, conditions, the works.
 
-### `import.meta`
+## 5. Reading and writing files
 
-```ts
-// meta.ts
-console.log(import.meta.url);       // file:///abs/path/meta.ts
-console.log(import.meta.dirname);   // /abs/path
-console.log(import.meta.filename);  // /abs/path/meta.ts
-```
-
-## 4. Working with files
-
-The `node:fs` module's promises API is properly asynchronous:
+`fs.promises` is **genuinely async** (tokio `spawn_blocking`), so two
+concurrent reads actually overlap on the blocking pool:
 
 ```ts
 // fs-demo.ts
@@ -148,40 +137,28 @@ const dir = path.join(process.cwd(), "demo-out");
 await fs.mkdir(dir, { recursive: true });
 await fs.writeFile(path.join(dir, "hello.txt"), "hi");
 
-// Two concurrent reads — they actually run in parallel on tokio's blocking pool.
 const [a, b] = await Promise.all([
   fs.readFile(path.join(dir, "hello.txt"), "utf-8"),
-  fs.readFile(path.join(dir, "hello.txt")),
+  fs.readFile(path.join(dir, "hello.txt")),  // Buffer
 ]);
 console.log("text:", a);
-console.log("bytes:", b);            // a Buffer
+console.log("bytes:", b);
 console.log("isBuffer:", Buffer.isBuffer(b));
 
 await fs.rm(dir, { recursive: true });
 ```
 
-### Binary files
-
-`fs.readFileSync(path)` (no encoding) returns a `Buffer` so binary data
-round-trips correctly:
-
-```ts
-import fs from "node:fs";
-
-const bytes = fs.readFileSync("/usr/bin/ls");
-console.log("size:", bytes.length, "magic:", bytes[0], bytes[1], bytes[2], bytes[3]);
-```
-
-`Bun.file(path)` is the Bun-style API for the same:
+`fs.readFileSync(path)` with no encoding returns a `Buffer` so binary
+data round-trips correctly. `Bun.file` is the Bun-style version:
 
 ```ts
 const f = Bun.file("/etc/hosts");
-console.log("size:", f.size);
-const text = await f.text();
-const json = await Bun.file("./package.json").json();
+console.log("size:", f.size, "type:", f.type);
+console.log(await f.text());
+const pkg = await Bun.file("./package.json").json();
 ```
 
-## 5. fetch (it's actually async)
+## 6. fetch (and yes, it's actually async)
 
 ```ts
 // fetch-demo.ts
@@ -189,21 +166,22 @@ const t0 = Date.now();
 setTimeout(() => console.log("timer at +" + (Date.now() - t0) + "ms"), 50);
 
 const r = await fetch("https://httpbin.org/get?q=1");
-console.log("status:", r.status);
-console.log("at +" + (Date.now() - t0) + "ms");
+console.log("status:", r.status, "at +" + (Date.now() - t0) + "ms");
 
 const j = await r.json();
 console.log("echoed url:", j.url);
 ```
 
-Run it and you'll see the setTimeout fire while the request is in flight —
-bun-rs runs HTTP on tokio in the background, the JS thread stays free.
+Run it — the `setTimeout` fires while the request is in flight. HTTP
+runs on tokio in the background; the JS thread stays free.
 
 `Response.text() / .json() / .bytes() / .arrayBuffer()` all work; binary
-bodies (images, etc.) come through as a real Uint8Array, no UTF-8
-round-trip.
+bodies come through as real `Uint8Array`, no UTF-8 round-trip.
 
-## 6. HTTP server with `Bun.serve`
+`AbortController` honours request setup; it does not interrupt
+mid-stream — see [`capabilities.md`](capabilities.md).
+
+## 7. An HTTP server
 
 ```ts
 // server.ts
@@ -214,9 +192,10 @@ const server = Bun.serve({
     if (url.pathname === "/json") {
       return Response.json({ ok: true, path: url.pathname });
     }
-    return new Response("hello from bun-rs! " + req.method + " " + url.pathname, {
-      headers: { "x-runtime": "bun-rs" },
-    });
+    return new Response(
+      `hello from bun-rs! ${req.method} ${url.pathname}`,
+      { headers: { "x-runtime": "bun-rs" } },
+    );
   },
 });
 console.log(`listening on http://localhost:${server.port}`);
@@ -229,32 +208,49 @@ curl -i http://localhost:3000/
 curl -i http://localhost:3000/json
 ```
 
-To stop the server programmatically, call `server.stop()` from JS.
+HTTPS works the same way — pass `tls: { cert: Bun.file("cert.pem"), key:
+Bun.file("key.pem") }`. Per-request handling runs on tokio + hyper.
 
-> Limitation: requests are processed sequentially on the JS thread.
-> If a handler does async work (an `await fetch`, etc.) the runtime
-> continues servicing timers and the deferred promise mechanism
-> resolves things in order. Truly concurrent handlers are P2 work.
-
-## 7. crypto + assert + a tiny CLI
+## 8. Spawning subprocesses
 
 ```ts
-// cli.ts
+// run-cmd.ts
+import cp from "node:child_process";
+
+// sync, capture output
+const out = cp.execSync("ls -la /tmp | head -5", { encoding: "utf-8" });
+console.log(out);
+
+// callback style
+cp.exec("echo callback-style", (err, stdout) => {
+  if (err) throw err;
+  console.log("got:", stdout.trim());
+});
+
+// structured
+const r = cp.spawnSync("uname", ["-a"]);
+console.log("status:", r.status, "stdout:", r.stdout.toString().trim());
+```
+
+For `Bun.spawn` (async) the stdout stream now works (batch 210). Writing
+to `proc.stdin` after spawn does **not** work yet — for stdin pass
+`input:` to `spawnSync` instead.
+
+## 9. Hashing + assert
+
+```ts
+// hash.ts
 import crypto from "node:crypto";
 import assert from "node:assert";
 import { promises as fs } from "node:fs";
 
 const arg = process.argv[2];
-if (!arg) {
-  console.error("usage: bunrs cli.ts <file>");
-  process.exit(2);
-}
+if (!arg) { console.error("usage: bunrs hash.ts <file>"); process.exit(2) }
 
-const data = await fs.readFile(arg);
-const sha = crypto.createHash("sha256").update(data).digest("hex");
+const sha = crypto.createHash("sha256").update(await fs.readFile(arg)).digest("hex");
 console.log(`${sha}  ${arg}`);
 
-// inline test of the sha implementation against a known vector
+// inline check against a known vector
 assert.strictEqual(
   crypto.createHash("sha256").update("hello").digest("hex"),
   "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
@@ -262,45 +258,92 @@ assert.strictEqual(
 ```
 
 ```sh
-bunrs cli.ts /etc/hosts
+bunrs hash.ts /etc/hosts
 ```
 
-## 8. Running other processes
+## 10. The test runner
+
+Create `math.test.ts`:
 
 ```ts
-// run-cmd.ts
-import cp from "node:child_process";
+import { describe, test, expect, beforeEach, jest } from "bun:test";
 
-// sync
-const out = cp.execSync("ls -la /tmp | head -5", { encoding: "utf-8" });
-console.log(out);
+function double(n: number) { return n * 2 }
 
-// callback
-cp.exec("echo callback-style", (err, stdout) => {
-  if (err) throw err;
-  console.log("got:", stdout.trim());
+describe("double", () => {
+  let calls = 0;
+  beforeEach(() => { calls = 0 });
+
+  test("works on positives", () => {
+    expect(double(3)).toBe(6);
+    calls++;
+    expect(calls).toBeGreaterThan(0);
+  });
+
+  test("matchers", () => {
+    expect({ a: 1, b: 2 }).toEqual({ a: 1, b: 2 });
+    expect([1, 2, 3]).toContain(2);
+    expect("hello world").toMatch(/world/);
+    expect(() => { throw new Error("nope") }).toThrow("nope");
+  });
+
+  test.each([[1, 2], [2, 4], [10, 20]])(
+    "double(%i) → %i",
+    (input, expected) => expect(double(input)).toBe(expected),
+  );
+
+  test("fake timers", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2025-01-01T00:00:00Z"));
+    expect(Date.now()).toBe(new Date("2025-01-01T00:00:00Z").getTime());
+
+    let fired = false;
+    setTimeout(() => { fired = true }, 1000);
+    jest.advanceTimersByTime(1000);
+    expect(fired).toBe(true);
+
+    jest.useRealTimers();
+  });
 });
-
-// detailed
-const r = cp.spawnSync("uname", ["-a"]);
-console.log("status:", r.status);
-console.log("stdout:", r.stdout.toString().trim());
 ```
 
-## 9. REPL
+```sh
+bunrs test                       # discovers *.test.{ts,tsx,js,jsx} recursively
+bunrs test math                  # only files whose path contains "math"
+bunrs test --bail 1              # stop after first failure
+```
 
-Just run `bunrs` with no arguments:
+Output mirrors Bun's: `bun test <version>` header on stdout, `✓` / `✗`
+on stderr, footer counters.
+
+## 11. Bundle and install
+
+```sh
+# Single-file ESM bundle (no tree shake / plugins / minify)
+bunrs build app.ts -o out.js
+
+# Install dependencies (loose semver, no lockfile)
+bunrs install
+```
+
+Treat `bun-rs install` as "fetches packages from npm" — it's enough to
+get most pure-JS deps onto disk, not enough to replace `npm install` on
+a real project. See [`capabilities.md`](capabilities.md) §8.
+
+## 12. The REPL
+
+Run `bunrs` with no arguments:
 
 ```
 $ bunrs
 bun-rs REPL (v0.1.0 on JavaScriptCore.framework). Ctrl-D to exit.
 > 1 + 2
 3
-> let x = [1,2,3]; x.map(n=>n*2)
+> let xs = [1,2,3]; xs.map(n => n * 2)
 [ 2, 4, 6 ]
 > function f(
 ... a,
-... b
+... b,
 ... ) { return a + b }
 > f(10, 5)
 15
@@ -310,33 +353,32 @@ bun-rs REPL (v0.1.0 on JavaScriptCore.framework). Ctrl-D to exit.
 Multi-line input is detected via `JSCheckScriptSyntax` — if the snippet
 doesn't parse yet, you get a `...` continuation prompt.
 
-## 10. What to read next
+---
 
-- [`capabilities.md`](capabilities.md) — what works, what's a stub, what
-  throws. The most candid source.
-- [`guide.md`](guide.md) — fuller API reference with examples.
+## What to read next
+
+- [`capabilities.md`](capabilities.md) — the candid pass/stub/fail list.
+- [`guide.md`](guide.md) — fuller API reference.
 - [`roadmap.md`](roadmap.md) — what's planned next.
-- [`plan.md`](plan.md) — the day-by-day build log.
 
-## 11. Things that look like they should work but don't
+## Things that look like they should work but don't
 
-These are bun-rs's known sharp edges. Reach for real Bun (or Node) if you
-hit any of them — see [`capabilities.md`](capabilities.md) for the full
-list.
+Quick reminder before you wander off the tutorial: bun-rs has known
+sharp edges. The full list is in [`capabilities.md`](capabilities.md);
+the ones that bite most often:
 
-- `proc.stdin.write(...)` after `Bun.spawn(...)` — async stdin is not a
-  writable stream yet. Use `Bun.spawnSync({input: …})` for now.
-- `import x from "./data.toml" with { type: "toml" }` — import attributes
-  are unparsed. Use file extension instead: `import x from "./data.toml"`.
+- `proc.stdin.write(...)` after `Bun.spawn(...)` — async stdin not yet
+  exposed. Use `Bun.spawnSync({ input: ... })`.
+- `import x from "./data.toml" with { type: "toml" }` — import
+  attributes for non-JSON unparsed. Use the file extension only.
 - `Bun.password.hash(pw, "argon2id")` — runs HMAC-SHA256 under the hood,
-  not argon2. Compatible API, incompatible bytes.
-- `Worker`, `node:worker_threads`, `Bun.isMainThread === false` — no
-  worker support; `Bun.isMainThread` is always `true`.
-- `Bun.listen` / `Bun.connect` and `node:net.createServer` — raw TCP/UDP
-  not implemented; everything HTTP-shaped goes through hyper/reqwest.
-- `jest.useFakeTimers()` + `jest.setSystemTime(d)` — `Date` mocking would
-  require JSC native hooks we don't have.
-- Stack traces are JSC-style (`name@url:line:col`). Tests that grep for
+  not argon2. Compatible API, **incompatible bytes**.
+- `new Worker(...)`, `node:worker_threads` — workers throw.
+- `Bun.listen` / `Bun.connect` / `node:net.createServer` — raw TCP/UDP
+  not implemented; HTTP-shaped traffic goes through hyper/reqwest.
+- `node:dns.lookup` — always returns 127.0.0.1 / ::1.
+- Server-side `WebSocket` upgrade in `Bun.serve` — only the client is real.
+- Stack traces use JSC format (`name@url:line:col`). Tests that grep for
   V8's `at name (url:line:col)` will not match.
-- Snapshot files are created on first call but never diffed or rewritten;
-  `expect(x).toMatchSnapshot()` always passes (apart from arg validation).
+- `expect(x).toMatchSnapshot()` always passes — snapshot files get
+  created on first call but are never diffed or rewritten.

@@ -1,177 +1,252 @@
-# bun-rs Capabilities
+# What bun-rs can and cannot do
 
-A honest snapshot of what's implemented, what's stubbed, and what's missing.
-Numbers below come from running Bun's official `test/js/bun` suite against
-`bun-rs`. See `docs/tutorial.md` for guided examples of the working
-surface.
+> bun-rs is a personal toy project that aims to rewrite [Bun](https://github.com/oven-sh/bun)
+> in Rust. **It is very rough and very incomplete.** Treat everything below as
+> best-effort. If real software depends on it, use real Bun.
 
-Last suite run: **159 / 409 files passing (38.9 %)** · 6391 individual tests
-passing.
+The headline number: **159 / 409 file-level tests in Bun's own `test/js/bun`
+suite pass — about 38.9 %.** Roughly 6.3 K individual test cases green.
 
-## Conventions
+Three reasons that number isn't higher:
 
-- ✅ **works** — implemented in Rust + JS, passes real-world tests.
-- 🟡 **partial / stub** — exposed by name; many calls behave correctly but
-  edge cases or full semantics are missing.
-- ❌ **not implemented** — calling it throws or returns a placeholder.
+1. Whole API surfaces are deliberately stubbed (raw TCP/UDP/TLS, real DNS,
+   workers, true argon2, WebSocket server upgrade, Bun's own shell parser).
+2. Several "works" surfaces still trip on edge cases (sourcemap columns,
+   import attributes other than JSON, snapshot diffing).
+3. Bun's test suite assumes V8-style stack trace format; bun-rs emits JSC
+   format. A bunch of file failures are pure string-shape mismatches.
 
-The runtime never panics on missing APIs: stubs throw a JS `Error` so user
-code can `try / catch`.
+## Legend
+
+| | Meaning |
+|---|---|
+| ✅ | implemented in Rust + JS; behaves correctly on the cases we tested |
+| 🟡 | callable; partial semantics or known edge-case gaps |
+| ❌ | calling it throws a JS `Error` or returns a placeholder |
+
+The runtime **never panics** on missing APIs — stubs throw JS errors so
+your code can `try / catch`.
 
 ---
 
-## 1. Language & module system
+## 1. What you can build today
+
+Concrete things people have actually run on bun-rs:
+
+- A multi-file TypeScript program with `node_modules`.
+- An HTTP / HTTPS service with `Bun.serve` + `fetch` + JSON request bodies.
+- A CLI that reads files, hashes them, calls subprocesses.
+- A Jest-style test suite (`describe` / `test` / `expect` / `jest.fn` /
+  fake timers) running on `bun-rs test`.
+- A single-file bundle of a small ESM project via `bun-rs build`.
+- A SQLite-backed script via `bun:sqlite`.
+- A small WebSocket **client** consuming a real WS server.
+
+## 2. What you should *not* reach for bun-rs to do
+
+- Anything in production.
+- Raw TCP / UDP / TLS — `node:net`, `node:tls`, `node:dgram`, `Bun.listen`,
+  `Bun.connect` are shape stubs only.
+- Real password hashing — `Bun.password.hash` / `.verify` use HMAC-SHA256
+  under the hood, **not argon2 or bcrypt**. Compatible API, incompatible bytes.
+- Workers / SharedArrayBuffer / transferables — `Worker` throws.
+- WebSocket *server* (handshake upgrade in `Bun.serve`) — only the client
+  is real.
+- Live DNS — `node:dns.lookup` always returns 127.0.0.1 / ::1.
+- Bun's compile-to-binary (`bun build --compile`) — not implemented.
+- HTTP/2 server, Unix-domain sockets — not implemented.
+- Tools that depend on V8 stack format (`at name (url:line:col)`) — JSC
+  format is `name@url:line:col`.
+
+---
+
+## 3. Language
 
 | Feature | Status | Notes |
 |---|---|---|
-| ES2022+ syntax via JavaScriptCore | ✅ | All JSC-supported syntax. Top-level `await` works. |
-| TypeScript stripping (oxc) | ✅ | Types removed at load. Decorators / `enum` work; `experimentalDecorators` honoured. |
-| TSX / JSX | ✅ | `.tsx` files get JSX automatically. Plain `.js` with `</` triggers JSX too. |
-| ES modules — static `import` / `export` | ✅ | Hoisted via the rewriter so cycles resolve. |
-| Dynamic `import()` | ✅ | Returns a namespace object (`{ __esModule, default, …named }`). |
-| `node_modules` resolution | ✅ | Backed by `oxc_resolver` (handles `exports`, `main`, conditions). |
+| ES2022+ syntax via JavaScriptCore | ✅ | All JSC-supported syntax. |
+| TypeScript stripping (oxc) | ✅ | Decorators, enums work; `experimentalDecorators` honoured. |
+| TSX / JSX | ✅ | `.tsx` auto-JSX; `.js` with `</` triggers JSX too. Classic `React.createElement` runtime. |
+| ESM static `import` / `export` | ✅ | Hoisted by the rewriter so cycles resolve. All forms: named, default, namespace, renamed, `export *`, `export { x } from`, `export * as ns from`. |
+| Dynamic `import()` | ✅ | Returns `{ __esModule, default, …named }`. |
+| Top-level `await` | ✅ | Every module wrapped in `async function`. |
+| `using` / `await using` (ES2026) | ✅ | Lowered to try/finally by oxc before JSC sees them. |
+| `node_modules` resolution | ✅ | `oxc_resolver` — handles `exports`, `main`, conditions. |
 | CJS / ESM interop | ✅ | `require("esm-pkg")` and `import x from "cjs-pkg"` both work. |
+| `import.meta.url / .filename / .dirname / .main` | ✅ | |
+| `__filename` / `__dirname` in CJS | ✅ | Injected as `var` so `const __filename = …` in ESM also works. |
 | Import attributes `with { type: "json" }` | ✅ | Strict JSON. |
-| Import attributes `with { type: "yaml" / "text" / "toml" }` | ❌ | Rewriter does not yet thread the `with` clause to the loader. |
-| `require.resolve` / `require.cache` | 🟡 | `resolve` is best-effort; `cache` is the global module map. |
-| `__filename` / `__dirname` (CJS) | ✅ | Injected as `var` so `const __filename = ...` in ESM also works. |
-| Source maps (error stacks) | 🟡 | JSC `@url:line:col` format is preserved and remapped to user-original lines. V8 `at funcname (…)` format is not produced. |
+| Import attributes for `yaml` / `text` / `toml` | ❌ | Rewriter doesn't thread the `with` clause to the loader. Use the file extension instead. |
+| Source-map remapping in stack traces | 🟡 | Line numbers OK; columns drift on JSX-heavy files; format is JSC, not V8. |
 
-## 2. Test runner (`bun-rs test`)
+## 4. Test runner (`bun-rs test`)
 
 | Feature | Status | Notes |
 |---|---|---|
-| `describe` / `test` / `it` / hooks | ✅ | Full nesting; `beforeAll` inside a test body fires after the body. |
-| `expect` matchers | ✅ | ~120 matchers including `.not`, `.resolves`, `.rejects`, asymmetric (`expect.any`, `objectContaining`, …), `toMatchSnapshot`, `toMatchInlineSnapshot`. |
-| Snapshot files | 🟡 | First call creates `__snapshots__/<file>.snap`. Real diffing / write-on-update is not implemented. |
-| `test.each` / `describe.each` | ✅ | Including `.skipIf` / `.todoIf` / `.if` chains. |
-| `test.failing` | ✅ | Throwing test passes; non-throwing test fails. Timeouts always count as failures. |
-| `test.only` / `describe.only` | ✅ | When any `.only` is registered, other tests in the file are skipped. |
-| `test.concurrent` | 🟡 | Recognized as a flag (used by `onTestFinished` for the “cannot call here” error) but tests still run serially. |
-| `jest.setTimeout` / per-test timeout | ✅ | Uses `Promise.race`. |
-| `jest.useFakeTimers` / `jest.setSystemTime` | ❌ | Would require mocking `Date` while preserving identity — JSC has no clean hook. |
-| `mock.module(spec, factory)` | 🟡 | Works when the mock call runs before the first import. Re-evaluating already-imported modules is not implemented. |
+| `describe` / `test` / `it` / nested describes | ✅ | |
+| Lifecycle: `beforeAll` / `beforeEach` / `afterAll` / `afterEach` | ✅ | |
+| `expect` matchers | ✅ | ~120 matchers + `.not` + `.resolves` / `.rejects` + asymmetric (`expect.any`, `objectContaining`, …). |
+| `test.each` / `describe.each` (+ `.skipIf` / `.todoIf` / `.if`) | ✅ | |
+| `test.only` / `describe.only` | ✅ | |
+| `test.failing` | ✅ | Throwing → pass; not-throwing → fail. |
+| `test.concurrent` | 🟡 | Recognized; tests still run serially. |
+| `jest.fn` / `jest.spyOn` / call tracking | ✅ | |
+| `jest.useFakeTimers` / `jest.setSystemTime` | ✅ | Mocks `Date.now` + the runtime's timer queue. sinon-FakeTimers compat. `vi.*` aliases share the same factory. |
+| `jest.advanceTimersByTime` / `runAllTimers` | ✅ | |
+| `jest.clearAllMocks` / `resetAllMocks` / `restoreAllMocks` | 🟡 | No-op stubs. |
+| `mock.module(spec, factory)` | 🟡 | Works if hooked before first import; doesn't re-evaluate already-loaded modules. |
+| `toMatchSnapshot` / `toMatchInlineSnapshot` | 🟡 | Snapshot files are created on first call but never diffed or rewritten. |
 | Bunfig `[test].preload` | ✅ | |
-| Output format | ✅ | Matches Bun: `bun test <ver>` header on stdout, `✓` / `✗` on stderr, footer counters, `Ran N tests across M files.` |
+| Output format | ✅ | `bun test <ver>` header, `✓`/`✗` on stderr, footer counters. |
 
-## 3. Bun.* surface
+## 5. `Bun.*`
 
-| Feature | Status | Notes |
+| API | Status | Notes |
 |---|---|---|
-| `Bun.serve` (HTTP + HTTPS) | ✅ | hyper-backed; `routes:` config; `tls.cert` / `tls.key` accept files; reload, ref/unref, dispose, address. |
-| `Bun.serve` (HTTP/2) | ❌ | |
-| `Bun.serve` Unix sockets | 🟡 | URL reports `unix://path`; the listener still binds TCP under the hood. |
-| WebSocket server (`server.upgrade`) | 🟡 | Returns shape-correct objects; real WS upgrade not done. |
-| `Bun.serve` `fetch` handler | ✅ | Full request/response round-trip via hyper. |
+| `Bun.serve({ port, fetch, tls? })` | ✅ | HTTP + HTTPS, hyper + tokio per-request, ALPN-negotiated. `routes:` config, reload, ref/unref, dispose, address. |
+| `Bun.serve` HTTP/2 | ❌ | |
+| `Bun.serve` Unix sockets | 🟡 | URL reports `unix://path`; binds TCP under the hood. |
+| `Bun.serve` `server.upgrade` (WebSocket) | 🟡 | Shape-correct objects; no real WS upgrade. |
 | `Bun.file(path)` | ✅ | `.text()`, `.json()`, `.bytes()`, `.arrayBuffer()`, `.stream()`, `.slice()`, `.exists()`, `.write()`. |
-| `Bun.file(fd)` | 🟡 | Limited — reads work for regular fds, edge cases (oversized slice) skipped. |
-| `Bun.write(dest, data)` | ✅ | string / Buffer / Uint8Array / Blob / Response / Bun.file. |
-| `fetch` | ✅ | reqwest-backed; redirect / abort / keepalive / body types covered. |
-| `Bun.spawn` / `Bun.spawnSync` | 🟡 | Sync path is solid; async streams via node:child_process. `proc.stdin` (Writable) is **not** exposed — tests that write to stdin after spawn fail. Timeout & SIGTERM supported. |
-| `Bun.$` (tagged template) | 🟡 | Delegates to `sh -c`. Supports `${{raw}}` interpolation, `.cwd` / `.env` / `.quiet` / `.throws`, `.text()` / `.json()` / `.blob()` (Promises pre-await, sync post-await). Bun-style usage messages for `dirname`, `basename`, `exit`. No real lexer / parser. |
-| `Bun.Glob` | ✅ | Backed by `globset` + `walkdir`. |
-| `Bun.password.hash` / `.verify` | 🟡 | Argument validation matches Bun; the actual hash is **HMAC-SHA256** (not argon2 or bcrypt). |
-| `Bun.CryptoHasher` / `Bun.SHA1`/`SHA256`/`MD5`/etc. | ✅ | All node:crypto algos plus sha3-{224,256,384,512}, blake2b/s, ripemd160, md4. `copy()` replays updates so HMAC state survives. |
+| `Bun.file(fd)` | 🟡 | Reads work for regular fds; some oversize cases skipped. |
+| `Bun.write(dest, data)` | ✅ | string / Buffer / Uint8Array / Blob / Response / `Bun.file`. |
+| `Bun.spawn` / `Bun.spawnSync` | 🟡 | Sync path solid. Async path now drains stdout as a real stream (batch 210). **`proc.stdin` writable is not exposed** — tests that write after spawn fail. Timeout / SIGTERM supported. |
+| `Bun.$` (tagged template shell) | 🟡 | Delegates to `sh -c`. Supports `${{raw}}`, `.cwd`, `.env`, `.quiet`, `.throws`. Awaited result has both Promise-returning and sync `text()` / `json()` / `blob()` / `arrayBuffer()` (batches 200/214). No real lexer/parser. |
+| `Bun.Glob` | ✅ | `globset` + `walkdir`. |
+| `Bun.password.hash` / `.verify` | 🟡❌ | Argument shape matches Bun; **actual hash is HMAC-SHA256, not argon2 / bcrypt**. |
+| `Bun.CryptoHasher` / `Bun.SHA1` / `Bun.SHA256` / `Bun.MD5` / etc. | ✅ | All node:crypto algos plus sha3-{224,256,384,512}, blake2b/s, ripemd160, md4. `copy()` replays updates. |
 | `Bun.randomUUIDv5` | ✅ | RFC 4122 SHA-1. |
-| `Bun.dns.lookup` / `.prefetch` / `.getCacheStats` | 🟡 | `lookup` returns `[{address, family, ttl}]`; oversized names reject. Cache stats reflect `prefetch` + `fetch`. |
-| `Bun.YAML.parse` / `.stringify` | 🟡 | serde_yaml backed. Expands `<<` merge keys. Doesn't support YAML 1.2 octal/hex literals or multi-document. |
-| `Bun.TOML.parse` | ✅ | toml crate. RangeError on deep inline tables. |
-| `Bun.JSONL.parse` / `.parseChunk` | ✅ | Stream-style with `{values, read, done, error}`. Rejects 1 GB+ inputs. |
+| `Bun.dns.lookup` / `.prefetch` / `.getCacheStats` | 🟡 | `lookup` returns `[{address, family, ttl}]`. Cache stats reflect prefetch + fetch hits. Resolution is stubbed to 127.0.0.1 / ::1. |
+| `Bun.YAML.parse` / `.stringify` | 🟡 | serde_yaml; expands `<<` merge keys; no YAML 1.2 octal/hex literals; single-document only. |
+| `Bun.TOML.parse` | ✅ | toml crate. |
+| `Bun.JSON5` / `Bun.JSONC` | ✅ | json5 crate. |
+| `Bun.JSONL.parse` / `.parseChunk` | ✅ | Stream-style; rejects 1 GB+ inputs. |
 | `Bun.markdown` | ✅ | pulldown-cmark. |
-| `Bun.Transpiler` | ✅ | oxc. `tsconfig` JSX factory partial. |
-| `Bun.stripANSI`, `Bun.sliceAnsi`, `Bun.wrapAnsi`, `Bun.stringWidth` | 🟡 | ANSI-aware skip, CJK width 2, basic emoji width; grapheme clusters / ZWJ sequences / regional indicators / nested color re-emission are not handled. |
-| `Bun.Cookie` / `Bun.CookieMap` | ✅ | RFC 6265 attribute order, FormData-style iteration. Validation of name/value/domain chars is loose. |
-| `Bun.S3Client` | 🟡 | Surface only — `file()` / `write()` / `presign()` throw. queueSize clamping works. |
-| `Bun.semver`, `Bun.color`, `Bun.deepEquals`, `Bun.gc`, `Bun.allocUnsafe`, … | ✅ | |
-| `Bun.generateHeapSnapshot("v8")` | 🟡 | Emits a minimal valid V8 snapshot (1 node + 1 edge), enough to satisfy `v8-heapsnapshot`. Real heap walking is not done. |
-| `Bun.listen` / `Bun.connect` (TCP / TLS) | ❌ | Shape stubs only; real I/O throws. |
+| `Bun.Transpiler` | ✅ | oxc. `tsconfig` JSX factory is partial. |
+| `Bun.stripANSI`, `Bun.sliceAnsi`, `Bun.wrapAnsi`, `Bun.stringWidth` | 🟡 | ANSI-aware skip; CJK width 2; basic emoji width; no grapheme clusters / ZWJ / regional indicators. |
+| `Bun.Cookie` / `Bun.CookieMap` | ✅ | RFC 6265 attribute order. |
+| `Bun.semver`, `Bun.color`, `Bun.deepEquals`, `Bun.gc`, `Bun.allocUnsafe`, `Bun.cron`, `Bun.HMAC`, `Bun.CSRF` | ✅ | |
+| `Bun.generateHeapSnapshot("v8")` | 🟡 | Emits a minimal valid V8 snapshot (1 node, 1 edge); enough for `v8-heapsnapshot` to parse. |
+| `Bun.S3Client` | 🟡 | Surface only. `file()` / `write()` / `presign()` throw. |
+| `Bun.listen` / `Bun.connect` (TCP / TLS) | ❌ | Shape stubs; real I/O throws. |
 | `Bun.Image` | ❌ | |
-| `Bun.FileSystemRouter` | ❌ | Stub. |
+| `Bun.FileSystemRouter` | ❌ | |
 | `Bun.SQL` / `Bun.RedisClient` | ❌ | |
-| `Bun.plugin` | 🟡 | Registers loaders but most virtual-module behavior is unimplemented. |
+| `Bun.plugin` | 🟡 | Registers loaders; most virtual-module behaviour unimplemented. |
 | `Bun.shellInternals.parse` / `Bun.$.lex` | ❌ | Naive tokenizer only. |
+| `Bun.env`, `Bun.version`, `Bun.revision`, `Bun.sleep`, `Bun.sleepSync` | ✅ | |
+| `bun:sqlite` | ✅ | rusqlite. |
+| `bun:ffi` | 🟡 | `dlopen` + primitive types via libffi. No structs / callbacks. |
 
-## 4. Node built-ins
+## 6. `node:*`
 
 | Module | Status | Notes |
 |---|---|---|
-| `node:fs` (sync + promises + streams) | ✅ | Including `ReadStream` / `WriteStream` / `Stats` / `Dirent` classes. |
+| `node:fs` (sync + promises + streams) | ✅ | Includes `ReadStream` / `WriteStream` / `Stats` / `Dirent`. `fs.promises` is **genuinely async** (tokio `spawn_blocking`). |
 | `node:path` (posix + win32) | ✅ | |
-| `node:os` | ✅ | |
-| `node:buffer` | ✅ | base64url, copyBytesFrom, allocUnsafeSlow. |
-| `node:events` | ✅ | EventEmitter + once + on. |
-| `node:util` (`promisify`, `inspect`, `format`, `types`, `parseArgs`) | ✅ | |
-| `node:crypto` | ✅ | Hash, Hmac, randomBytes, randomUUID, timingSafeEqual, getRandomValues; webcrypto sub-namespace stub. |
-| `node:child_process` (`spawn`, `spawnSync`, `exec`, `execSync`, `execFile`, `fork`) | 🟡 | All synchronous; `spawn` doesn't expose a writable stdin or real Readable stdout. |
+| `node:os` | ✅ | platform / arch / type / release / hostname / cpus / totalmem / userInfo / EOL. |
+| `node:buffer` | ✅ | Zero-copy from Rust; base64url, copyBytesFrom, allocUnsafeSlow. |
+| `node:events` | ✅ | Full EventEmitter + `once` + `on` (async iterator). |
+| `node:util` | ✅ | `promisify`, `callbackify`, `inspect`, `format`, `debuglog`, `types.isX`, `inherits`, `parseArgs`. |
+| `node:crypto` | ✅ | createHash, createHmac, randomBytes, randomUUID, randomInt, timingSafeEqual, getRandomValues. `webcrypto` namespace is a stub. |
+| `node:child_process` | 🟡 | `spawnSync` / `execSync` solid. Async `spawn` now drains stdout; **stdin writable still missing**; `fork` stub. |
 | `node:assert` (+ `/strict`) | ✅ | |
-| `node:querystring` / `node:url` (URL/URLSearchParams) | ✅ | |
-| `node:stream` (+ `/web` + `/promises` + `/consumers`) | ✅ | |
+| `node:querystring` | ✅ | |
+| `node:url` | ✅ | URL, URLSearchParams, fileURLToPath, pathToFileURL. |
+| `node:stream` (+ `/web` + `/promises` + `/consumers`) | ✅ | Readable / Writable / Duplex / PassThrough, pipeline / finished, Web Streams interop. |
 | `node:readline` (+ `/promises`) | ✅ | |
-| `node:zlib` | ✅ | gzip / deflate / brotli via flate2 / brotli. |
-| `node:http` / `node:https` | 🟡 | Server works; client uses reqwest under the hood. No Agent class internals, no keep-alive pool tuning. |
+| `node:zlib` | ✅ | gzip / deflate / brotli via flate2 + brotli. |
+| `node:http` / `node:https` | 🟡 | Server wraps `Bun.serve`; client wraps `fetch`. No real `Agent`, no keep-alive pool tuning. |
 | `node:tty` | 🟡 | `isatty`, `ReadStream` / `WriteStream` shape. |
 | `node:net` | ❌ | `Socket` / `Server` / `connect` / `createServer` throw. `BlockList`, `SocketAddress`, default-auto-select-family helpers are shape stubs. |
 | `node:tls` | ❌ | `connect` throws. SecureContext etc. are stubs. |
-| `node:dns` (+ `/promises`) | 🟡 | Resolution returns `127.0.0.1` / `::1`; `setServers` validates input. No real resolver. |
+| `node:dns` (+ `/promises`) | 🟡 | Resolution returns 127.0.0.1 / ::1. `setServers` validates. No real resolver. |
 | `node:dgram` | ❌ | |
 | `node:worker_threads` | ❌ | `Worker` class throws. |
-| `node:cluster`, `node:domain`, `node:async_hooks`, `node:repl`, `node:sea` | 🟡 | Shape stubs; `AsyncLocalStorage` works. |
+| `node:vm` | 🟡 | `runInNewContext` via `new Function`. No real isolation. |
 | `node:perf_hooks` | 🟡 | `performance.now`, basic histogram stubs. |
-| `node:vm` | 🟡 | `runInNewContext` via `new Function`. |
 | `node:v8` | 🟡 | Heap snapshot via `Bun.generateHeapSnapshot`; serializer / deserializer are stubs. |
+| `node:cluster`, `node:domain`, `node:async_hooks`, `node:repl`, `node:sea` | 🟡 | Shape stubs; `AsyncLocalStorage` does work. |
 | `node:test`, `node:diagnostics_channel`, `node:inspector`, `node:trace_events`, `node:wasi` | 🟡 | Shape stubs. |
 
-## 5. Web globals
+## 7. Web globals
 
-| API | Status |
-|---|---|
-| `fetch`, `Request`, `Response`, `Headers`, `URL`, `URLSearchParams` | ✅ |
-| `FormData` | 🟡 (no `multipart/form-data` Request body serialization with WebKit boundary) |
-| `Blob`, `File` | ✅ |
-| `TextEncoder`, `TextDecoder` (incl. `encodeInto`) | ✅ |
-| `ReadableStream`, `WritableStream`, `TransformStream`, byob reader | ✅ |
-| `WebSocket` (client) | ✅ |
-| `crypto` / `crypto.subtle` | 🟡 (random + digest; no key import / sign / verify / derive) |
-| `setTimeout`, `setInterval`, `setImmediate`, `queueMicrotask`, `process.nextTick` | ✅ |
-| `AbortController`, `AbortSignal` (+ `timeout`, `any`, `abort`) | ✅ |
-| `structuredClone` | ✅ |
-| `Worker` | ❌ |
-| `BroadcastChannel`, `MessageChannel`, `MessagePort` | ❌ |
-| `EventSource` | ❌ |
+| API | Status | Notes |
+|---|---|---|
+| `console.{log,info,warn,error,debug,trace,dir}` | ✅ | |
+| `process.{argv,env,cwd,exit,platform,arch,pid,versions,config,release,features}` | ✅ | |
+| `setTimeout` / `setInterval` / `clearTimeout` / `clearInterval` / `setImmediate` | ✅ | Compatible with `jest.useFakeTimers`. |
+| `queueMicrotask` / `process.nextTick` | ✅ | |
+| `fetch` | ✅ | reqwest + rustls; non-blocking; honours `AbortSignal`. |
+| `Request` / `Response` / `Headers` | ✅ | `Response.body` is a real stream. |
+| `URL` / `URLSearchParams` | ✅ | Rust `url` crate. |
+| `Blob` / `File` | ✅ | |
+| `FormData` | 🟡 | Class works; no `multipart/form-data` Request-body serialization with WebKit boundary. |
+| `TextEncoder` / `TextDecoder` (incl. `encodeInto`) | ✅ | UTF-8. |
+| `atob` / `btoa` | ✅ | |
+| `Buffer` (Node-compatible, extends Uint8Array) | ✅ | Zero-copy from Rust. |
+| `ReadableStream` / `WritableStream` / `TransformStream` (+ BYOB reader, `pipeTo` / `pipeThrough` / `tee` / `ReadableStream.from`) | ✅ | |
+| `WebSocket` (client) | ✅ | Text + binary, custom close codes. |
+| `AbortController` / `AbortSignal` (+ `.timeout` / `.any`) | ✅ | `fetch` AbortSignal fires at request setup, not mid-stream. |
+| `crypto` / `crypto.subtle` | 🟡 | Random + digest. No key import / sign / verify / derive. |
+| `structuredClone` | ✅ | |
+| `Worker` (web global) | ❌ | |
+| `BroadcastChannel` / `MessageChannel` / `MessagePort` | ❌ | |
+| `EventSource` | ❌ | |
 
-## 6. CLI
+## 8. CLI
 
 | Command | Status | Notes |
 |---|---|---|
-| `bun-rs <file>` / `run <file>` | ✅ | |
-| `bun-rs -e <code>` / `-p <code>` | ✅ | `-e` wraps in async IIFE so top-level `await` works. |
+| `bun-rs <file>` / `bun-rs run <file>` | ✅ | |
+| `bun-rs -e <code>` / `-p <code>` | ✅ | Wrapped in async IIFE so top-level `await` works. |
 | `bun-rs test [paths]` | ✅ | |
-| `bun-rs build <entry> [-o out]` | 🟡 | Bundles for trivial single-file ESM; no tree shaking, code splitting, plugins, or minify. |
-| `bun-rs install` | 🟡 | Resolves and downloads from registry; no lockfile, peerDeps, or workspaces. |
-| `bun-rs init` | ❌ | |
-| `bun-rs upgrade`, `bun-rs add`, `bun-rs remove`, `bun-rs run <script>` | ❌ | |
-| REPL | 🟡 | Basic line editor; no completion / syntax highlighting. |
+| `bun-rs build <entry> [-o out]` | 🟡 | Single-file ESM only. No tree shaking, code splitting, plugins, minify, sourcemap. |
+| `bun-rs install` | 🟡 | Downloads from registry. No lockfile, no peer deps, no workspaces. Loose semver (^/~ stripped to exact). |
+| REPL (no args) | 🟡 | Basic line editor with `JSCheckScriptSyntax`-driven multi-line continuation. No completion / syntax highlighting. |
+| `bun-rs init` / `add` / `remove` / `upgrade` | ❌ | |
+| `bun-rs run <package-script>` | ❌ | |
+| `bun-rs <file> --inspect` / `--watch` | ❌ | |
 
-## 7. What we deliberately don't aim for
+## 9. Platforms
 
-- JavaScript JIT optimizations (Baseline / DFG / FTL) — we use stock JSC.
-- Bun's compile-to-binary (`bun build --compile`).
+- ✅ **macOS** (system `JavaScriptCore.framework`).
+- 🟡 **Linux** (`libjavascriptcoregtk-4.1`) — build set up, lightly smoke-tested.
+- ❌ **Windows** — no public JSC build; would need to compile WebKit ourselves.
+
+## 10. Deliberate non-goals
+
+The following are **out of scope** for the foreseeable future, not "todo":
+
+- JIT tier optimisation (Baseline / DFG / FTL). We use stock JSC.
+- Bun's `bun build --compile`.
 - Bun's own shell parser. We exec via system `sh -c`.
-- Worker thread isolates with shared global state — JSC contexts are not
-  reused across threads in our binding.
+- Worker-thread JSC isolates with shared state. Different JSC contexts are
+  not reused across threads in our binding.
 - Full Node compatibility for low-level networking (raw TCP/UDP/TLS).
+- Bun's own bundler / minifier / CSS pipeline.
 
-## 8. Known gaps that block the most tests
+## 11. Biggest unlocked-tests levers, descending
 
-These are the largest single levers in terms of test files unblocked, in
-rough descending order of impact:
+If you wanted to push the 38.9 % number up, these are the largest single
+levers, in rough order of impact:
 
-1. **Real `Bun.spawn` async stdin/stdout streams** — many spawn/IPC tests.
-2. **Import attributes (`with { type: ... }`)** — text-loader, yaml-loader,
-   toml-loader fixtures.
-3. **`Bun.build` real bundler** — bundler.test, css.test, snapshot-tests.
-4. **`mock.module` cache invalidation** — mock/*.test.ts files.
-5. **Worker threads** — Bun.isMainThread, IPC.
-6. **Real `node:net` / `node:tls`** — http server tests, fetch behaviour tests.
-7. **V8-style stack format** — test/stack.test.ts, error-rendering tests.
-8. **`jest.setSystemTime` mockable Date** — fake-timers, test-timers.
+1. Async `Bun.spawn` writable stdin stream — many spawn/IPC tests.
+2. Import attributes (`with { type: "..." }`) for non-JSON — text /
+   YAML / TOML loader fixtures.
+3. `Bun.build` as a real bundler — `bundler.test`, `css.test`,
+   snapshot-tests.
+4. `mock.module` cache invalidation — `mock/*.test.ts` files.
+5. `Worker` / `node:worker_threads` — `Bun.isMainThread`, IPC tests.
+6. Real `node:net` / `node:tls` — http server tests, fetch behaviour tests.
+7. V8-style stack format — `stack.test.ts`, error-rendering tests.
+8. WebSocket server upgrade in `Bun.serve` — WS server tests.
+
+---
+
+## See also
+
+- [`tutorial.md`](tutorial.md) — runnable walk-through of the supported surface.
+- [`guide.md`](guide.md) — fuller API reference with examples.
+- [`roadmap.md`](roadmap.md) — what's planned next.
+- [`plan.md`](plan.md) — the day-by-day build log.
