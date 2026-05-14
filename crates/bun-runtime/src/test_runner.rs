@@ -522,23 +522,64 @@ const GLOBALS: &str = r#"
   g.afterEach = (fn) => curr().afterEach.push(fn);
 
   // ── expect ──
-  function deepEq(a, b) {
+  function deepEq(a, b, seen) {
     if (Object.is(a, b)) return true;
     if (a === null || b === null) return false;
     if (typeof a !== "object" || typeof b !== "object") return false;
+    // Cycle protection: avoid infinite recursion on self-referencing structs.
+    seen = seen || new WeakMap();
+    if (seen.has(a)) return seen.get(a) === b;
+    seen.set(a, b);
     if (Array.isArray(a) !== Array.isArray(b)) return false;
     if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
     if (a instanceof RegExp && b instanceof RegExp) return a.toString() === b.toString();
+    if (a instanceof Error && b instanceof Error) {
+      return a.name === b.name && a.message === b.message;
+    }
+    if (a instanceof URL && b instanceof URL) return a.href === b.href;
+    if (a instanceof Map && b instanceof Map) {
+      if (a.size !== b.size) return false;
+      for (const [k, v] of a) {
+        if (!b.has(k)) return false;
+        if (!deepEq(v, b.get(k), seen)) return false;
+      }
+      return true;
+    }
+    if (a instanceof Set && b instanceof Set) {
+      if (a.size !== b.size) return false;
+      const ba = Array.from(b);
+      const used = new Array(ba.length).fill(false);
+      for (const va of a) {
+        let found = false;
+        for (let j = 0; j < ba.length; j++) {
+          if (!used[j] && deepEq(va, ba[j], seen)) { used[j] = true; found = true; break; }
+        }
+        if (!found) return false;
+      }
+      return true;
+    }
+    if (a instanceof Headers && b instanceof Headers) {
+      const am = {}; const bm = {};
+      for (const [k, v] of a) am[k.toLowerCase()] = v;
+      for (const [k, v] of b) bm[k.toLowerCase()] = v;
+      return deepEq(am, bm, seen);
+    }
     if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
       if (a.byteLength !== b.byteLength) return false;
       for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+    if (a instanceof ArrayBuffer && b instanceof ArrayBuffer) {
+      if (a.byteLength !== b.byteLength) return false;
+      const av = new Uint8Array(a), bv = new Uint8Array(b);
+      for (let i = 0; i < a.byteLength; i++) if (av[i] !== bv[i]) return false;
       return true;
     }
     const ak = Object.keys(a), bk = Object.keys(b);
     if (ak.length !== bk.length) return false;
     for (const k of ak) {
       if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
-      if (!deepEq(a[k], b[k])) return false;
+      if (!deepEq(a[k], b[k], seen)) return false;
     }
     return true;
   }
@@ -1004,21 +1045,7 @@ const GLOBALS: &str = r#"
   deepEq = function (a, b) {
     if (b && b.__bun_match && typeof b.asymmetricMatch === "function") return b.asymmetricMatch(a);
     if (a && a.__bun_match && typeof a.asymmetricMatch === "function") return a.asymmetricMatch(b);
-    if (Array.isArray(a) && Array.isArray(b)) {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) if (!deepEq(a[i], b[i])) return false;
-      return true;
-    }
-    if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)
-        && !(a instanceof Date) && !(a instanceof RegExp)) {
-      const ak = Object.keys(a), bk = Object.keys(b);
-      if (ak.length !== bk.length) return false;
-      for (const k of ak) {
-        if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
-        if (!deepEq(a[k], b[k])) return false;
-      }
-      return true;
-    }
+    // Delegate to _origDeepEq for everything — it handles Set/Map/Headers/etc.
     return _origDeepEq(a, b);
   };
 
