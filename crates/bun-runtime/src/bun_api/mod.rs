@@ -2471,10 +2471,10 @@ const BUN_HELPERS: &str = r##"
       stderr: r.stderr || new Uint8Array(0),
       stdoutText: (r.stdout || new Uint8Array(0)).toString(),
       stderrText: (r.stderr || new Uint8Array(0)).toString(),
-      text() { return new TextDecoder().decode(this.stdout); },
-      json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
-      bytes() { return this.stdout; },
-      arrayBuffer() { return this.stdout.buffer.slice(0); },
+      text() { return Promise.resolve(new TextDecoder().decode(this.stdout)); },
+      json() { return Promise.resolve(JSON.parse(new TextDecoder().decode(this.stdout))); },
+      bytes() { return Promise.resolve(this.stdout); },
+      arrayBuffer() { return Promise.resolve(this.stdout.buffer.slice(0)); },
       lines() {
         const text = new TextDecoder().decode(this.stdout);
         const parts = text.split("\n");
@@ -2652,10 +2652,10 @@ const BUN_HELPERS: &str = r##"
       stderr: r.stderr || new Uint8Array(0),
       stdoutText: (r.stdout || new Uint8Array(0)).toString(),
       stderrText: (r.stderr || new Uint8Array(0)).toString(),
-      text() { return new TextDecoder().decode(this.stdout); },
-      json() { return JSON.parse(new TextDecoder().decode(this.stdout)); },
-      bytes() { return this.stdout; },
-      arrayBuffer() { return this.stdout.buffer.slice(0); },
+      text() { return Promise.resolve(new TextDecoder().decode(this.stdout)); },
+      json() { return Promise.resolve(JSON.parse(new TextDecoder().decode(this.stdout))); },
+      bytes() { return Promise.resolve(this.stdout); },
+      arrayBuffer() { return Promise.resolve(this.stdout.buffer.slice(0)); },
       lines() {
         const text = new TextDecoder().decode(this.stdout);
         const parts = text.split("\n");
