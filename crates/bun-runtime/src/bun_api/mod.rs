@@ -795,7 +795,8 @@ const BUN_HELPERS: &str = r##"
       x500: "6ba7b814-9dad-11d1-80b4-00c04fd430c8",
     };
     let nsStr = String(namespace || "");
-    if (NS_PREDEFINED[nsStr]) nsStr = NS_PREDEFINED[nsStr];
+    const lowered = nsStr.toLowerCase();
+    if (NS_PREDEFINED[lowered]) nsStr = NS_PREDEFINED[lowered];
     // Parse namespace UUID → 16-byte buffer.
     const nsHex = nsStr.replace(/-/g, "");
     if (nsHex.length !== 32) throw new TypeError("namespace must be a UUID");
@@ -816,6 +817,17 @@ const BUN_HELPERS: &str = r##"
     out[6] = (out[6] & 0x0f) | 0x50; // version 5
     out[8] = (out[8] & 0x3f) | 0x80; // variant RFC
     if (encoding === "buffer") return out;
+    if (encoding === "base64") return out.toString("base64");
+    if (encoding === "base64url") return out.toString("base64url");
+    if (encoding === "hex" || encoding === undefined) {
+      const hex = out.toString("hex");
+      return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32);
+    }
+    if (typeof encoding === "string") {
+      const err = new TypeError("randomUUIDv5: invalid encoding " + JSON.stringify(encoding));
+      err.code = "ERR_INVALID_ARG_VALUE";
+      throw err;
+    }
     const hex = out.toString("hex");
     return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32);
   };
