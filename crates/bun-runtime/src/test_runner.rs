@@ -575,10 +575,13 @@ const GLOBALS: &str = r#"
       for (let i = 0; i < a.byteLength; i++) if (av[i] !== bv[i]) return false;
       return true;
     }
-    const ak = Object.keys(a), bk = Object.keys(b);
+    // jest semantics: undefined-valued keys are equivalent to absent keys
+    // for toEqual (but not toStrictEqual). Filter both sides.
+    const ak = Object.keys(a).filter(k => a[k] !== undefined);
+    const bk = Object.keys(b).filter(k => b[k] !== undefined);
     if (ak.length !== bk.length) return false;
     for (const k of ak) {
-      if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+      if (!Object.prototype.hasOwnProperty.call(b, k) && b[k] !== undefined) return false;
       if (!deepEq(a[k], b[k], seen)) return false;
     }
     return true;
