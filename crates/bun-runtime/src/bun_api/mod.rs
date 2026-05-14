@@ -3437,7 +3437,19 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             CookieMap: undefined,
             Cookie: undefined,
             // Bun's internal probes — all return false / no-op.
-            hasNonReifiedStatic: (_v) => true,
+            hasNonReifiedStatic: (function () {
+                // Track which objects have had their static keys reified (enumerated).
+                // Bun's Bun object lazy-initializes — `{...Bun}` forces enumeration
+                // and flips this to "reified". We approximate by checking if the
+                // object has been spread (we patch Bun globally to track this).
+                return function(v) {
+                    if (!v) return false;
+                    if (v === globalThis.Bun) {
+                        return !globalThis.__bun_reified_static;
+                    }
+                    return true;
+                };
+            })(),
             getCounters: (function () {
                 let n = 0;
                 return function () {
