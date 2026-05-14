@@ -138,6 +138,12 @@ const POLYFILL: &str = r#"
     }
 
     static allocUnsafe(size) { return new Buffer(size); }
+    static allocUnsafeSlow(size) { return new Buffer(size); }
+    static copyBytesFrom(view, offset, length) {
+      const o = offset || 0;
+      const l = length === undefined ? view.length - o : length;
+      return Buffer.from(view.subarray(o, o + l));
+    }
     static byteLength(value, encoding) {
       if (value instanceof Uint8Array) return value.byteLength;
       if (typeof value === "string") {
@@ -146,6 +152,14 @@ const POLYFILL: &str = r#"
       return value.length || 0;
     }
     static isBuffer(b) { return b instanceof Buffer; }
+    static compare(a, b) {
+      const al = a.length, bl = b.length;
+      const len = Math.min(al, bl);
+      for (let i = 0; i < len; i++) {
+        if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+      }
+      return al < bl ? -1 : (al > bl ? 1 : 0);
+    }
     static isEncoding(s) {
       return ["utf8", "utf-8", "ascii", "latin1", "binary", "hex", "base64"]
         .includes(String(s).toLowerCase());

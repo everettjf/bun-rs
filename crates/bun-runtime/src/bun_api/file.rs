@@ -101,6 +101,68 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             Ok(Value::new_string(args.context(), &p_str))
         });
 
+        // .stream() returns a ReadableStream of the file's bytes.
+        let p_stream = path.clone();
+        bind(ctx, &obj, "stream", move |args| {
+            let ctx = args.context();
+            let bytes = std::fs::read(&p_stream).unwrap_or_default();
+            let buf = crate::buffer::buffer_from_bytes(ctx, bytes);
+            // Wrap in a one-shot ReadableStream.
+            let factory = ctx.eval(
+                "(buf) => new ReadableStream({ start(c) { if (buf.byteLength > 0) c.enqueue(buf); c.close(); } })",
+                Some("[file.stream]"),
+            ).map_err(|e| e.to_string())?;
+            let factory = factory.to_object().map_err(|e| e.to_string())?;
+            factory.call(None, &[buf]).map_err(|e| e.to_string())
+        });
+
+        // .writer({ highWaterMark? }) returns a Bun-style FileSink that
+        // accumulates writes and commits on .end()/.flush().
+        let p_writer = path.clone();
+        bind(ctx, &obj, "writer", move |args| {
+            let ctx = args.context();
+            let p = p_writer.clone();
+            let factory = ctx.eval(
+                r#"(path) => {
+                    const fs = require("node:fs");
+                    const chunks = [];
+                    let written = 0;
+                    let ended = false;
+                    const sink = {
+                        write(chunk) {
+                            if (ended) throw new Error("FileSink: write after end");
+                            const u = chunk instanceof Uint8Array ? chunk
+                                : (typeof chunk === "string" ? new TextEncoder().encode(chunk)
+                                : new Uint8Array(chunk));
+                            chunks.push(u);
+                            written += u.byteLength;
+                            return u.byteLength;
+                        },
+                        flush() {
+                            if (chunks.length === 0) return 0;
+                            const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+                            const buf = new Uint8Array(total);
+                            let off = 0;
+                            for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+                            chunks.length = 0;
+                            try {
+                                fs.appendFileSync(path, buf);
+                            } catch {
+                                fs.writeFileSync(path, buf);
+                            }
+                            return total;
+                        },
+                        end() { sink.flush(); ended = true; return written; },
+                        ref() {}, unref() {},
+                    };
+                    return sink;
+                }"#,
+                Some("[file.writer]"),
+            ).map_err(|e| e.to_string())?;
+            let factory = factory.to_object().map_err(|e| e.to_string())?;
+            factory.call(None, &[Value::new_string(ctx, &p)]).map_err(|e| e.to_string())
+        });
+
         // .slice(start, end?, type?) — returns a new Bun.file-like object
         // whose body methods read the underlying file then slice the bytes.
         let p_slice = path.clone();

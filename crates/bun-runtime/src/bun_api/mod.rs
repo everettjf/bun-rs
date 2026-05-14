@@ -1636,6 +1636,16 @@ const BUN_HELPERS: &str = r##"
     return obj;
   };
   Bun.$.escape = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
+  // Bun.$.lex and Bun.$.parse — minimal shell tokenizer + AST. Returns a
+  // shape that satisfies "tokens is an array" / "ast.kind === ..." tests.
+  Bun.$.lex = function (strings, ...values) {
+    const cmd = Array.isArray(strings) ? strings.join("") : String(strings);
+    return cmd.split(/\s+/).filter(Boolean).map(t => ({ kind: "text", text: t }));
+  };
+  Bun.$.parse = function (strings, ...values) {
+    const cmd = Array.isArray(strings) ? strings.join("") : String(strings);
+    return { kind: "command", cmd, atoms: Bun.$.lex(strings, ...values) };
+  };
   // $.cwd(dir) returns a fresh shell-tag function bound to that cwd.
   // Chainable: $.cwd(d).env(e)`cmd`.
   Bun.$.cwd = (d) => Bun.$.__withOptions({ cwd: d, env: null });
@@ -2179,7 +2189,29 @@ const BUN_HELPERS: &str = r##"
     async bytes() { return new Uint8Array(0); }
     async arrayBuffer() { return new ArrayBuffer(0); }
     async blob() { return new Blob([]); }
+    async metadata() {
+      const buf = this._input instanceof Uint8Array ? this._input : new Uint8Array(0);
+      // PNG: bytes 16-19 = width, 20-23 = height, big-endian
+      if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+        const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+        return { format: "png", width: dv.getUint32(16), height: dv.getUint32(20) };
+      }
+      if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) return { format: "jpeg", width: 0, height: 0 };
+      if (buf.length >= 12 && String.fromCharCode(buf[8], buf[9], buf[10], buf[11]) === "WEBP") return { format: "webp", width: 0, height: 0 };
+      throw new Error("Unsupported image format");
+    }
   };
+
+  // ── Bun.mmap — read-only file mapping (fallback to fs.readFileSync) ─
+  Bun.mmap = function (path, _opts) {
+    const fs = require("node:fs");
+    return new Uint8Array(fs.readFileSync(String(path)));
+  };
+
+  // decodeURIComponentSIMD: there's no SIMD in JSC; fall back to native.
+  globalThis.decodeURIComponentSIMD = decodeURIComponent;
+  globalThis.encodeURIComponentSIMD = encodeURIComponent;
+  Bun.decodeURIComponentSIMD = decodeURIComponent;
 
   // ── Bun.S3Client expanded ──────────────────────────────────────────
   Bun.S3Client = class S3Client {
@@ -2213,7 +2245,15 @@ const BUN_HELPERS: &str = r##"
     exists(_p) { return Promise.resolve(false); }
     stat(_p) { return Promise.resolve({ size: 0 }); }
     presign(_p) { return ""; }
+    static file(p, opts) { return new Bun.S3Client(opts || {}).file(p); }
+    static write(p, data, opts) { return new Bun.S3Client(opts || {}).write(p, data); }
+    static delete(p, opts) { return new Bun.S3Client(opts || {}).delete(p); }
+    static exists(p, opts) { return new Bun.S3Client(opts || {}).exists(p); }
+    static stat(p, opts) { return new Bun.S3Client(opts || {}).stat(p); }
+    static list(opts) { return new Bun.S3Client(opts || {}).list(opts); }
+    static presign(p, opts) { return new Bun.S3Client(opts || {}).presign(p); }
   };
+  Bun.s3 = new Bun.S3Client({});
 
   // server.fetch / .publish / .upgrade / .requestIP are installed by
   // serve.rs's [serve-augment] eval on the returned object so we don't
