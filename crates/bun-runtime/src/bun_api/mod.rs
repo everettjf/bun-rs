@@ -720,12 +720,40 @@ const BUN_HELPERS: &str = r##"
     // "hex" / default: UUID dash-separated string.
     return dashed;
   };
-  Bun.randomUUIDv5 = function (name, namespace) {
-    // Deterministic UUID v5-ish (uses Bun.hash, NOT real SHA-1). Good
-    // enough for tests that only check stable output.
-    const h = Bun.hash(String(namespace || "") + ":" + String(name));
-    const hex = (h & 0xffffffffffffffffn).toString(16).padStart(16, "0").repeat(2).slice(0, 32);
-    return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-5" + hex.slice(13, 16) + "-8" + hex.slice(17, 20) + "-" + hex.slice(20, 32);
+  // RFC 4122 §4.3 v5: SHA-1(namespace_bytes || name_bytes), then version 5
+  // and variant RFC bits.
+  Bun.randomUUIDv5 = function (name, namespace, encoding) {
+    const crypto = require("node:crypto");
+    const NS_PREDEFINED = {
+      dns:  "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      url:  "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+      oid:  "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+      x500: "6ba7b814-9dad-11d1-80b4-00c04fd430c8",
+    };
+    let nsStr = String(namespace || "");
+    if (NS_PREDEFINED[nsStr]) nsStr = NS_PREDEFINED[nsStr];
+    // Parse namespace UUID → 16-byte buffer.
+    const nsHex = nsStr.replace(/-/g, "");
+    if (nsHex.length !== 32) throw new TypeError("namespace must be a UUID");
+    const nsBytes = Buffer.alloc(16);
+    for (let i = 0; i < 16; i++) nsBytes[i] = parseInt(nsHex.substr(i * 2, 2), 16);
+    // Coerce name to bytes.
+    let nameBytes;
+    if (typeof name === "string") nameBytes = Buffer.from(name, "utf8");
+    else if (name instanceof Uint8Array) nameBytes = Buffer.from(name);
+    else if (name instanceof ArrayBuffer) nameBytes = Buffer.from(new Uint8Array(name));
+    else if (ArrayBuffer.isView(name)) nameBytes = Buffer.from(new Uint8Array(name.buffer, name.byteOffset, name.byteLength));
+    else nameBytes = Buffer.from(String(name), "utf8");
+    const h = crypto.createHash("sha1");
+    h.update(nsBytes); h.update(nameBytes);
+    const digest = h.digest();
+    const out = Buffer.alloc(16);
+    digest.copy(out, 0, 0, 16);
+    out[6] = (out[6] & 0x0f) | 0x50; // version 5
+    out[8] = (out[8] & 0x3f) | 0x80; // variant RFC
+    if (encoding === "buffer") return out;
+    const hex = out.toString("hex");
+    return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20, 32);
   };
 
   // ── Bun.escapeHTML / .stringWidth / .indexOfLine / .concatArrayBuffers ─
