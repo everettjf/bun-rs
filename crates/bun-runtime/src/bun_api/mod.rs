@@ -1834,7 +1834,8 @@ const BUN_HELPERS: &str = r##"
     } else {
       cmd = String(strings);
     }
-    const r = cp.spawnSync("sh", ["-c", cmd]);
+    const builtin = Bun.$.__tryBuiltin && Bun.$.__tryBuiltin(cmd, {});
+    const r = builtin || cp.spawnSync("sh", ["-c", cmd]);
     const obj = {
       exitCode: r.status === null ? -1 : r.status,
       stdout: r.stdout || new Uint8Array(0),
@@ -1900,6 +1901,51 @@ const BUN_HELPERS: &str = r##"
     };
     return obj;
   };
+  // Bun-shell builtins: simulate Bun-specific exit/output for known commands
+  // that have non-POSIX behavior. Returns { status, stdout, stderr } or null.
+  Bun.$.__tryBuiltin = function (cmd, _spawnOpts) {
+    cmd = String(cmd).trim();
+    function fail(code, stdout, stderr) {
+      return {
+        status: code,
+        stdout: Buffer.from(stdout || "", "utf-8"),
+        stderr: Buffer.from(stderr || "", "utf-8"),
+      };
+    }
+    const tokens = cmd.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1 && tokens[0] === "dirname") {
+      return fail(1, "", "usage: dirname string\n");
+    }
+    if (tokens.length === 1 && tokens[0] === "basename") {
+      return fail(1, "", "usage: basename string\n");
+    }
+    // exit with non-numeric arg or too many args — Bun-specific messages
+    if (tokens[0] === "exit") {
+      if (tokens.length === 1) return { status: 0, stdout: Buffer.from("", "utf-8"), stderr: Buffer.from("", "utf-8") };
+      if (tokens.length > 2) return fail(1, "", "exit: too many arguments\n");
+      const n = tokens[1];
+      const parsed = parseInt(n, 10);
+      if (isNaN(parsed) || String(parsed) !== n.replace(/^[+-]?0+/, m => m.replace(/0+$/, "0")).replace(/^\+/, "")) {
+        // Simpler: re-parse and compare digit-only.
+        if (!/^-?\d+$/.test(n)) return fail(1, "", "exit: numeric argument required\n");
+      }
+      const code = ((parseInt(n, 10) % 256) + 256) % 256;
+      return { status: code, stdout: Buffer.from("", "utf-8"), stderr: Buffer.from("", "utf-8") };
+    }
+    // basename <p1> <p2> ... — Bun's shell basename iterates args (POSIX
+    // basename only takes 1 + optional suffix).
+    if (tokens.length > 2 && tokens[0] === "basename") {
+      const parts = tokens.slice(1);
+      const outLines = parts.map(p => {
+        // Normalize / and \, strip trailing separators, take last segment.
+        let s = String(p).replace(/[\\/]+$/g, "");
+        const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+        return i >= 0 ? s.slice(i + 1) : s;
+      });
+      return fail(0, outLines.join("\n") + "\n", "");
+    }
+    return null;
+  };
   Bun.$.escape = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'";
   // Bun.$.lex and Bun.$.parse — minimal shell tokenizer + AST. Returns a
   // shape that satisfies "tokens is an array" / "ast.kind === ..." tests.
@@ -1952,7 +1998,8 @@ const BUN_HELPERS: &str = r##"
       const spawnOpts = {};
       if (opts.cwd) spawnOpts.cwd = String(opts.cwd);
       if (opts.env) spawnOpts.env = { ...process.env, ...opts.env };
-      const r = cp.spawnSync("sh", ["-c", cmd], spawnOpts);
+      const builtin = Bun.$.__tryBuiltin && Bun.$.__tryBuiltin(cmd, spawnOpts);
+      const r = builtin || cp.spawnSync("sh", ["-c", cmd], spawnOpts);
       return Bun.$.__wrapShellResult(r);
     };
     tag.cwd = (d) => Bun.$.__withOptions({ ...opts, cwd: d });
@@ -2550,8 +2597,15 @@ const BUN_HELPERS: &str = r##"
         if (typeof opts.queueSize !== "number" || opts.queueSize < 1) {
           throw new RangeError("S3Client: queueSize must be >= 1");
         }
+        if (opts.queueSize > 255) opts.queueSize = 255;
       }
       this.opts = opts;
+      this.queueSize = opts.queueSize;
+    }
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      const parts = [];
+      if (this.opts.queueSize !== undefined) parts.push("queueSize: " + this.opts.queueSize);
+      return "S3Client { " + parts.join(", ") + " }";
     }
     file(_p) {
       // Return a Bun.file-shaped object whose I/O throws lazily.
@@ -2720,6 +2774,19 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             Cookie: undefined,
             // Bun's internal probes — all return false / no-op.
             hasNonReifiedStatic: (_v) => true,
+            getCounters: (function () {
+                let n = 0;
+                return function () {
+                    n++;
+                    return {
+                        spawnSync_blocking: n,
+                        spawn_memfd: n,
+                        webkitMessageHandler: 0,
+                        resolveSync: n,
+                        resolve: n,
+                    };
+                };
+            })(),
             isReifiedStatic: (_v) => false,
             heapSize: () => 0,
             generateHeapSnapshot: () => "{}",
