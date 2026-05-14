@@ -188,6 +188,12 @@ fn build_net_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             createServer: () => { throw new Error('net.createServer not implemented'); },
             connect: () => { throw new Error('net.connect not implemented'); },
             createConnection: () => { throw new Error('net.createConnection not implemented'); },
+            getDefaultAutoSelectFamily: () => false,
+            setDefaultAutoSelectFamily: () => {},
+            getDefaultAutoSelectFamilyAttemptTimeout: () => 250,
+            setDefaultAutoSelectFamilyAttemptTimeout: () => {},
+            BlockList: class { constructor() {} addAddress() {} addRange() {} addSubnet() {} check() { return false; } rules() { return []; } },
+            SocketAddress: class { constructor(opts) { Object.assign(this, opts || {}); } },
         })"#,
         Some("[node:net]"),
     )
