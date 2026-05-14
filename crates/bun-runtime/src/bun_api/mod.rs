@@ -1543,7 +1543,37 @@ const BUN_HELPERS: &str = r##"
     return wrapped.join("\n");
   };
   Bun.sliceAnsi = (s, a, b) => String(s).slice(a, b);
-  Bun.stripANSI = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "");
+    Bun.stripANSI = (s) => {
+    let out = "";
+    const str = String(s);
+    let i = 0;
+    while (i < str.length) {
+      const c = str.charCodeAt(i);
+      if (c !== 0x1b) { out += str.charAt(i); i++; continue; }
+      if (i + 1 >= str.length) { i++; continue; }
+      const next = str.charAt(i + 1);
+      if (next === "[") {
+        let j = i + 2;
+        while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
+        while (j < str.length && str.charCodeAt(j) >= 0x20 && str.charCodeAt(j) <= 0x2f) j++;
+        if (j < str.length) j++;
+        i = j;
+      } else if (next === "]") {
+        let j = i + 2;
+        while (j < str.length) {
+          if (str.charCodeAt(j) === 0x07) { j++; break; }
+          if (str.charCodeAt(j) === 0x1b && j + 1 < str.length && str.charAt(j + 1) === "\\") { j += 2; break; }
+          j++;
+        }
+        i = j;
+      } else if (next === "(" || next === ")" || next === "#" || next === "%") {
+        i += 3;
+      } else {
+        i += 2;
+      }
+    }
+    return out;
+  };
   Bun.password = {
     hash: async (pw, _opts) => "$bun-rs-stub$" + pw,
     hashSync: (pw, _opts) => "$bun-rs-stub$" + pw,
