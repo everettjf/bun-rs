@@ -117,6 +117,43 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Some("[fs.promises.copy-from-fs]"),
     ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[promises_v, exports_v])));
 
+    // Add node-style fs.readFile / fs.writeFile / fs.appendFile /
+    // fs.unlink / fs.mkdir / fs.access / fs.stat / fs.lstat / fs.exists
+    // / fs.copyFile / fs.realpath / fs.readdir as callback-style wrappers
+    // around the *Sync versions. They DON'T already exist as functions
+    // because promises versions are on fs.promises only.
+    let _ = ctx.eval(
+        r#"
+        ((fs) => {
+            const wrap = (name) => function (...args) {
+                let cb = null;
+                if (args.length > 0 && typeof args[args.length - 1] === "function") {
+                    cb = args.pop();
+                }
+                try {
+                    const r = fs[name](...args);
+                    if (cb) queueMicrotask(() => cb(null, r));
+                    return r;
+                } catch (e) {
+                    if (cb) queueMicrotask(() => cb(e));
+                    else throw e;
+                }
+            };
+            for (const k of ["readFile", "writeFile", "appendFile", "unlink", "mkdir",
+                             "access", "stat", "lstat", "fstat", "exists", "copyFile",
+                             "realpath", "readdir", "rename", "chmod", "chown",
+                             "lchown", "lchmod", "utimes", "readlink", "symlink",
+                             "link", "truncate", "open", "close", "ftruncate", "fsync",
+                             "mkdtemp"]) {
+                if (typeof fs[k] !== "function" && typeof fs[k + "Sync"] === "function") {
+                    fs[k] = wrap(k + "Sync");
+                }
+            }
+        })
+        "#,
+        Some("[fs-callback-wrappers]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[exports_v])));
+
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
 }
