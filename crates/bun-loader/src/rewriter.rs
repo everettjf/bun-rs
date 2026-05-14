@@ -133,7 +133,7 @@ fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
                 // Dynamic import returns a namespace object — wrap CJS-style
                 // module.exports so `.default` and named exports both work.
                 let replacement = format!(
-                    "Promise.resolve(__bun_require({arg_text}, __filename)).then(__m => (__m && __m.__esModule) ? __m : Object.assign({{ __esModule: true, default: __m }}, (__m && typeof __m === \"object\" ? __m : null)))"
+                    "Promise.resolve(__bun_require({arg_text}, __bun_path)).then(__m => (__m && __m.__esModule) ? __m : Object.assign({{ __esModule: true, default: __m }}, (__m && typeof __m === \"object\" ? __m : null)))"
                 );
                 out.replace_range(start as usize..end as usize, &replacement);
             }
@@ -191,7 +191,7 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                 let local = format!("__m_{}", next_local);
                 next_local += 1;
                 emit.synth(&format!(
-                    "const {local} = await __bun_require({}, __filename);",
+                    "const {local} = await __bun_require({}, __bun_path);",
                     js_string(spec_text)
                 ));
 
@@ -234,7 +234,7 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                 let local = format!("__m_{}", next_local);
                 next_local += 1;
                 emit.synth(&format!(
-                    "const {local} = await __bun_require({}, __filename);",
+                    "const {local} = await __bun_require({}, __bun_path);",
                     js_string(spec_text)
                 ));
                 hoisted_locals.insert(d.span.start, local);
@@ -249,7 +249,7 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                     let local = format!("__m_{}", next_local);
                     next_local += 1;
                     emit.synth(&format!(
-                        "const {local} = await __bun_require({}, __filename);",
+                        "const {local} = await __bun_require({}, __bun_path);",
                         js_string(spec_text)
                     ));
                     hoisted_locals.insert(d.span.start, local);

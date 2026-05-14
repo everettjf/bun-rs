@@ -365,34 +365,47 @@ fn load_module<'ctx>(
     // implicitly; our globalThis.require uses cwd which is wrong for
     // nested requires.
     let local_require = "const require = (function(){\
-        const r = (spec) => globalThis.__bun_require_sync(spec, __filename);\
+        const r = (spec) => globalThis.__bun_require_sync(spec, __bun_path);\
         r.resolve = (spec) => spec;\
         r.cache = (globalThis.require && globalThis.require.cache) || {};\
         r.main = (globalThis.require && globalThis.require.main) || null;\
         r.extensions = (globalThis.require && globalThis.require.extensions) || {};\
         return r;\
     })();\n";
+    // Skip predeclaring __filename/__dirname when user declares them
+    // (common ESM pattern: `const __filename = fileURLToPath(import.meta.url)`).
+    let user_decls_fn = prepared.rewritten.contains("const __filename")
+        || prepared.rewritten.contains("let __filename");
+    let user_decls_dn = prepared.rewritten.contains("const __dirname")
+        || prepared.rewritten.contains("let __dirname");
+    let predecls = format!(
+        "{}{}",
+        if user_decls_fn { "" } else { "var __filename = __bun_path;\n" },
+        if user_decls_dn { "" } else { "var __dirname = __bun_dirname;\n" },
+    );
     let wrapped = if is_sync {
         format!(
-            "(function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
+            "(function (__module, __bun_require, __bun_path, __bun_dirname, __bun_meta) {{\n\
                const __exports = __module.exports;\n\
                const exports = __module.exports;\n\
                const module = __module;\n\
                {}\
+               {}\
                {}\n\
              }})",
-            local_require, prepared.rewritten
+            predecls, local_require, prepared.rewritten
         )
     } else {
         format!(
-            "(async function (__module, __bun_require, __filename, __dirname, __bun_meta) {{\n\
+            "(async function (__module, __bun_require, __bun_path, __bun_dirname, __bun_meta) {{\n\
                const __exports = __module.exports;\n\
                const exports = __module.exports;\n\
                const module = __module;\n\
                {}\
+               {}\
                {}\n\
              }})",
-            local_require, prepared.rewritten
+            predecls, local_require, prepared.rewritten
         )
     };
 
