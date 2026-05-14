@@ -2571,6 +2571,8 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 },
                 toUTF16Alloc(buf) { return buf.toString("utf8"); },
             },
+            decodeURIComponentSIMD: decodeURIComponent,
+            encodeURIComponentSIMD: encodeURIComponent,
             // patchInternals.{parse,apply,makeDiff} — Bun's internal git-
             // patch utilities. We stub them so the test file at least
             // loads; individual tests will fail with our stub semantics.

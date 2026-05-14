@@ -223,6 +223,40 @@
       }
       return new Uint8Array(out);
     }
+    get encoding() { return "utf-8"; }
+    encodeInto(src, dest) {
+      // Encode `src` into `dest` Uint8Array. Returns { read, written }.
+      if (!(dest instanceof Uint8Array)) {
+        throw new TypeError("encodeInto: destination must be a Uint8Array");
+      }
+      let read = 0, written = 0;
+      const s = String(src);
+      while (read < s.length && written < dest.length) {
+        const c = s.charCodeAt(read);
+        let bytes;
+        if (c < 0x80) { if (written + 1 > dest.length) break; dest[written++] = c; read++; continue; }
+        if (c < 0x800) {
+          if (written + 2 > dest.length) break;
+          dest[written++] = 0xc0 | (c >> 6); dest[written++] = 0x80 | (c & 0x3f); read++; continue;
+        }
+        if (c < 0xd800 || c >= 0xe000) {
+          if (written + 3 > dest.length) break;
+          dest[written++] = 0xe0 | (c >> 12);
+          dest[written++] = 0x80 | ((c >> 6) & 0x3f);
+          dest[written++] = 0x80 | (c & 0x3f);
+          read++; continue;
+        }
+        if (written + 4 > dest.length) break;
+        const c2 = s.charCodeAt(read + 1);
+        const cp = 0x10000 + (((c & 0x3ff) << 10) | (c2 & 0x3ff));
+        dest[written++] = 0xf0 | (cp >> 18);
+        dest[written++] = 0x80 | ((cp >> 12) & 0x3f);
+        dest[written++] = 0x80 | ((cp >> 6) & 0x3f);
+        dest[written++] = 0x80 | (cp & 0x3f);
+        read += 2;
+      }
+      return { read, written };
+    }
   }
   g.TextEncoder = __bun_te;
   g.TextDecoder = class {
