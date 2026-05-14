@@ -21,6 +21,24 @@ use std::path::{Path, PathBuf};
 
 use bun_jsc::Context;
 
+fn read_bunfig_preload(cwd: &Path) -> Option<Vec<String>> {
+    let path = cwd.join("bunfig.toml");
+    if !path.exists() { return None; }
+    let src = std::fs::read_to_string(&path).ok()?;
+    let value: toml::Value = toml::from_str(&src).ok()?;
+    let test_section = value.get("test")?;
+    let preload = test_section.get("preload")?;
+    match preload {
+        toml::Value::String(s) => Some(vec![s.clone()]),
+        toml::Value::Array(a) => Some(
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 pub fn run_tests(paths: Vec<String>) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let roots: Vec<PathBuf> = if paths.is_empty() {
@@ -46,6 +64,24 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
     let rt = crate::Runtime::new(vec![crate::bun_exe_path(), "test".to_string()]);
     install_globals(&rt.ctx);
+
+    // bunfig.toml preload: parse the [test].preload entry and load each
+    // preload file BEFORE evaluating any test file. Lets test setups
+    // register matchers / mocks etc.
+    if let Some(preloads) = read_bunfig_preload(&cwd) {
+        for preload in &preloads {
+            let abs = if PathBuf::from(preload).is_absolute() {
+                PathBuf::from(preload)
+            } else {
+                cwd.join(preload)
+            };
+            if abs.exists() {
+                if let Err(e) = crate::modules::run_entry(&rt.ctx, &abs) {
+                    eprintln!("preload {} failed: {e}", abs.display());
+                }
+            }
+        }
+    }
 
     let mut total_pass = 0usize;
     let mut total_fail = 0usize;
