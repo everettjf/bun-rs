@@ -230,15 +230,36 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let ctx = args.context();
         let v = ctx.eval("({})", Some("[Bun.serve]")).unwrap();
         let obj = v.to_object().unwrap();
-        obj.set_property("port", &Value::new_number(ctx, resolved_port as f64))
+        // Detect TLS / unix-socket from opts so we expose the right URL scheme.
+        let has_tls = opts_obj
+            .get_property("tls")
+            .map(|v| v.is_object())
+            .unwrap_or(false);
+        let unix_path = opts_obj
+            .get_property("unix")
+            .ok()
+            .and_then(|v| if v.is_string() { Some(v.to_string()) } else { None });
+        let user_hostname = opts_obj
+            .get_property("hostname")
+            .ok()
+            .and_then(|v| if v.is_string() { Some(v.to_string()) } else { None })
+            .unwrap_or_else(|| "localhost".to_string());
+        let scheme = if has_tls { "https" } else { "http" };
+        let (url_str, hostname_val) = if let Some(ref path) = unix_path {
+            (format!("unix://{}", path), None)
+        } else {
+            (format!("{scheme}://{user_hostname}:{resolved_port}/"), Some(user_hostname.clone()))
+        };
+        if unix_path.is_none() {
+            obj.set_property("port", &Value::new_number(ctx, resolved_port as f64))
+                .unwrap();
+        }
+        if let Some(ref h) = hostname_val {
+            obj.set_property("hostname", &Value::new_string(ctx, h))
+                .unwrap();
+        }
+        obj.set_property("url", &Value::new_string(ctx, &url_str))
             .unwrap();
-        obj.set_property("hostname", &Value::new_string(ctx, "localhost"))
-            .unwrap();
-        obj.set_property(
-            "url",
-            &Value::new_string(ctx, &format!("http://localhost:{resolved_port}/")),
-        )
-        .unwrap();
         let stop_clone2 = stop_flag.clone();
         let stop_cb = Callback::new(ctx, "stop", move |args| {
             stop_clone2.store(true, Ordering::SeqCst);
@@ -259,7 +280,7 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let _ = ctx.eval(
             &format!(
                 r#"(function(s){{
-                    try {{ s.url = new URL("http://localhost:{port}/"); }} catch {{}}
+                    try {{ s.url = new URL("{url}"); }} catch {{}}
                     Object.defineProperty(s, Symbol.dispose, {{ value: () => s.stop(true), configurable: true }});
                     Object.defineProperty(s, Symbol.asyncDispose, {{ value: async () => s.stop(true), configurable: true }});
                     s.ref = () => {{}};
@@ -289,6 +310,7 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
                     s.pendingRequests = 0;
                     return s;
                 }})"#,
+                url = url_str,
                 port = resolved_port,
             ),
             Some("[serve-augment]"),
