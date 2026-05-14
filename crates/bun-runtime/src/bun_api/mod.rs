@@ -2890,7 +2890,33 @@ const BUN_HELPERS: &str = r##"
         const se = new SyntaxError(e && e.message ? e.message : String(e));
         throw se;
       }
-      return JSON.parse(json);
+      const parsed = JSON.parse(json);
+      // Post-process: expand merge keys ("<<") by inlining the referenced
+      // mapping(s) into the parent object. YAML 1.1 merge-key extension.
+      function expandMerge(node) {
+        if (node === null || typeof node !== "object") return node;
+        if (Array.isArray(node)) {
+          for (let i = 0; i < node.length; i++) node[i] = expandMerge(node[i]);
+          return node;
+        }
+        for (const k of Object.keys(node)) node[k] = expandMerge(node[k]);
+        if ("<<" in node) {
+          const merges = node["<<"];
+          delete node["<<"];
+          const list = Array.isArray(merges) ? merges : [merges];
+          // Per YAML spec: merged values fill missing keys (don't override).
+          // For list form: earlier entries take precedence over later ones.
+          for (const m of list) {
+            if (m && typeof m === "object") {
+              for (const [k, v] of Object.entries(m)) {
+                if (!(k in node)) node[k] = v;
+              }
+            }
+          }
+        }
+        return node;
+      }
+      return expandMerge(parsed);
     },
     stringify(v, _opts) {
       const json = JSON.stringify(v);
