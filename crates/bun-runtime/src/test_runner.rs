@@ -590,11 +590,12 @@ const GLOBALS: &str = r#"
     if (typeof v === "function") return "[Function]";
     try { return JSON.stringify(v); } catch { return String(v); }
   }
-  function mkExpect(received, not) {
+  function mkExpect(received, not, label) {
     const fail = (msg) => { throw new Error(msg); };
     const check = (cond, expected, action) => {
       if (not ? cond : !cond) {
-        fail(`expect(${fmt(received)})${not ? ".not" : ""}.${action}(${expected !== undefined ? fmt(expected) : ""})`);
+        const base = `expect(${fmt(received)})${not ? ".not" : ""}.${action}(${expected !== undefined ? fmt(expected) : ""})`;
+        fail(label ? `${label}\n\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
       }
     };
     const obj = {
@@ -1000,13 +1001,9 @@ const GLOBALS: &str = r#"
     return obj;
   }
 
-  g.expect = function (received) {
+  g.expect = function (received, label) {
     g.__bun_assertion_state.count++;
     g.__bun_assertion_state.hasAny = true;
-    // expect() with no args: a chain whose matchers are no-ops (Bun
-    // semantics — useful in 'await expect(promise)' patterns where the
-    // assertion is implicit) plus the original .fail / .pass /
-    // .unreachable helpers.
     if (arguments.length === 0) {
       function makeNoArgChain(flipped) {
         const chain = mkExpect(undefined, flipped);
@@ -1021,7 +1018,7 @@ const GLOBALS: &str = r#"
       return makeNoArgChain(false);
     }
     function makeChain(notFlag) {
-      const e = mkExpect(received, notFlag);
+      const e = mkExpect(received, notFlag, label);
       Object.defineProperty(e, "not", { get() { return makeChain(!notFlag); } });
       return e;
     }
