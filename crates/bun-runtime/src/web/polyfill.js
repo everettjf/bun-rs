@@ -104,11 +104,38 @@
         for (const k of Object.keys(init)) this.append(k, init[k]);
       }
     }
-    _normName(k) { return String(k).toLowerCase(); }
+    _normName(k) {
+      const s = String(k);
+      // RFC 7230 token chars: !#$%&'*+-.^_`|~ + ALPHA + DIGIT. Reject
+      // anything else (matches fetch spec validateHeaderName).
+      if (s.length === 0) throw new TypeError("Invalid header name");
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        const ok =
+          (c >= 0x30 && c <= 0x39) || // 0-9
+          (c >= 0x41 && c <= 0x5a) || // A-Z
+          (c >= 0x61 && c <= 0x7a) || // a-z
+          c === 0x21 || c === 0x23 || c === 0x24 || c === 0x25 || c === 0x26 ||
+          c === 0x27 || c === 0x2a || c === 0x2b || c === 0x2d || c === 0x2e ||
+          c === 0x5e || c === 0x5f || c === 0x60 || c === 0x7c || c === 0x7e;
+        if (!ok) throw new TypeError("Invalid header name: " + s);
+      }
+      return s.toLowerCase();
+    }
+    _normValue(v) {
+      const s = String(v);
+      // Reject CR / LF / NUL.
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c === 0 || c === 10 || c === 13) throw new TypeError("Invalid header value");
+      }
+      return s;
+    }
     append(k, v) {
       const key = this._normName(k);
+      const val = this._normValue(v);
       const existing = this._map.get(key);
-      this._map.set(key, existing == null ? String(v) : existing + ", " + v);
+      this._map.set(key, existing == null ? val : existing + ", " + val);
     }
     delete(k) { this._map.delete(this._normName(k)); }
     get(k) {
@@ -116,7 +143,7 @@
       return v === undefined ? null : v;
     }
     has(k) { return this._map.has(this._normName(k)); }
-    set(k, v) { this._map.set(this._normName(k), String(v)); }
+    set(k, v) { this._map.set(this._normName(k), this._normValue(v)); }
     *entries() { for (const e of this._map.entries()) yield e; }
     *keys() { for (const k of this._map.keys()) yield k; }
     *values() { for (const v of this._map.values()) yield v; }
