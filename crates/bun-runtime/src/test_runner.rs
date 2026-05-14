@@ -216,6 +216,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             // Reset inner-afterAll hooks (registered by
                             // afterAll() calls inside the test body).
                             globalThis.__bun_inner_afterAll = [];
+                            // Mark whether we're in a concurrent test so
+                            // onTestFinished() can throw appropriately.
+                            globalThis.__bun_in_concurrent_test = !!t.concurrent;
                             let result;
                             try {
                                 const tmo = t.timeout || 5000;
@@ -518,6 +521,7 @@ const GLOBALS: &str = r#"
       skip,
       timeout,
       failing: !!(opts && opts.failing),
+      concurrent: !!(opts && opts.concurrent),
     });
   }
 
@@ -553,7 +557,7 @@ const GLOBALS: &str = r#"
   // .if(cond) — run only if cond is truthy.
   g.test.if = (cond) => (cond ? g.test : g.test.skip);
   g.it.if = g.test.if;
-  g.test.concurrent = (name, fn) => pushTest(name, fn);
+  g.test.concurrent = (name, fn) => pushTest(name, fn, { concurrent: true });
   g.it.concurrent = g.test.concurrent;
   g.test.concurrent.skip = g.test.skip;
   g.test.concurrent.only = g.test.only;

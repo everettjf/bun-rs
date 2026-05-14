@@ -161,7 +161,13 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 expectTypeOf: globalThis.expectTypeOf || (() => new Proxy(function(){}, { get: () => () => undefined, apply: () => undefined })),
                 // onTestFinished / onTestFailed — register a cleanup hook
                 // that runs at end of current test (or describe).
-                onTestFinished: (fn) => { globalThis.__bun_current_finally = (globalThis.__bun_current_finally || []); globalThis.__bun_current_finally.push(fn); },
+                onTestFinished: (fn) => {
+                    if (globalThis.__bun_in_concurrent_test) {
+                        throw new Error("Cannot call onTestFinished() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.");
+                    }
+                    globalThis.__bun_current_finally = (globalThis.__bun_current_finally || []);
+                    globalThis.__bun_current_finally.push(fn);
+                },
                 onTestFailed: (_fn) => {},
                 test_listing: [],
                 isInDescribe: () => false,
