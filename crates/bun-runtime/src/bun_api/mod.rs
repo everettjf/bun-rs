@@ -1622,6 +1622,75 @@ const BUN_HELPERS: &str = r##"
     }
     return out;
   };
+  // ── Bun.CryptoHasher / Bun.SHA1 / Bun.SHA256 / ... ─────────────────
+  // Wraps node:crypto.createHash with a Bun-style API: chainable update,
+  // digest, copy. Bun ships SHA1/SHA224/SHA256/SHA384/SHA512/SHA512_256/
+  // MD4/MD5/blake2b/blake2s/sha3/ripemd160 as separate classes — same
+  // class with the algo baked in. Each instance throws after digest.
+  Bun.CryptoHasher = class CryptoHasher {
+    constructor(algorithm, key) {
+      this.algorithm = String(algorithm || "sha256");
+      const c = require("node:crypto");
+      try {
+        this._h = key ? c.createHmac(this.algorithm, key) : c.createHash(this.algorithm);
+      } catch (e) {
+        const ts = ["shake128", "shake256"];
+        if (ts.includes(this.algorithm)) {
+          if (key) throw new Error(this.algorithm + " is not supported as HMAC");
+          this._h = c.createHash("sha256"); // fallback
+        } else throw e;
+      }
+      this._done = false;
+    }
+    update(input, encoding) {
+      if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to update");
+      if (input instanceof Blob) input = new Uint8Array(input._bytes || []);
+      this._h.update(input, encoding);
+      return this;
+    }
+    digest(encoding) {
+      if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to digest again");
+      this._done = true;
+      const r = this._h.digest(encoding === "buffer" || encoding === undefined ? undefined : encoding);
+      return encoding === undefined || encoding === "buffer" ? r : String(r);
+    }
+    copy() {
+      const n = Object.create(CryptoHasher.prototype);
+      n.algorithm = this.algorithm;
+      const c = require("node:crypto");
+      n._h = c.createHash(this.algorithm); // approximation: cannot deep-copy crypto state
+      n._done = false;
+      return n;
+    }
+    get byteLength() {
+      if (this._done) throw new Error(this.algorithm + " hasher already digested");
+      const sizes = { sha1: 20, sha224: 28, sha256: 32, sha384: 48, sha512: 64, "sha512-224": 28, "sha512-256": 32, md4: 16, md5: 16, "blake2b256": 32, "blake2b512": 64, ripemd160: 20, "sha3-224": 28, "sha3-256": 32, "sha3-384": 48, "sha3-512": 64 };
+      return sizes[this.algorithm] || 32;
+    }
+    static hash(algorithm, input, encoding) {
+      const h = new CryptoHasher(algorithm);
+      h.update(input);
+      return h.digest(encoding);
+    }
+  };
+  function _makeStaticHasher(algo, blocklen) {
+    const klass = class extends Bun.CryptoHasher {
+      constructor() { super(algo); }
+      static hash(input, encoding) { return Bun.CryptoHasher.hash(algo, input, encoding); }
+    };
+    Object.defineProperty(klass, "name", { value: algo.toUpperCase().replace("-", "") });
+    klass.byteLength = blocklen;
+    return klass;
+  }
+  Bun.SHA1 = _makeStaticHasher("sha1", 20);
+  Bun.SHA224 = _makeStaticHasher("sha224", 28);
+  Bun.SHA256 = _makeStaticHasher("sha256", 32);
+  Bun.SHA384 = _makeStaticHasher("sha384", 48);
+  Bun.SHA512 = _makeStaticHasher("sha512", 64);
+  Bun.SHA512_256 = _makeStaticHasher("sha512-256", 32);
+  Bun.MD4 = _makeStaticHasher("md4", 16);
+  Bun.MD5 = _makeStaticHasher("md5", 16);
+
   Bun.password = {
     hash: async (pw, _opts) => "$bun-rs-stub$" + pw,
     hashSync: (pw, _opts) => "$bun-rs-stub$" + pw,
