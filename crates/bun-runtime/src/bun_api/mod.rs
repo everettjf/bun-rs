@@ -1493,7 +1493,7 @@ const BUN_HELPERS: &str = r##"
   Bun.wrapAnsi = function (s, width, opts) {
     if (s == null) return "";
     s = String(s);
-    if (typeof width !== "number" || width <= 0) return s;
+    if (typeof width !== "number" || width <= 0 || !Number.isFinite(width)) return s;
     const trim = !opts || opts.trim !== false;
     const hard = !!(opts && opts.hard);
     const wordWrap = !opts || opts.wordWrap !== false;
