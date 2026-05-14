@@ -2683,12 +2683,53 @@ const BUN_HELPERS: &str = r##"
     const _cache = new Set();
     const _stats = { cacheHitsCompleted: 0, cacheHitsInflight: 0, cacheMisses: 0, size: 0, errors: 0, totalCount: 0 };
     return {
-      lookup: async (host) => ({ address: "127.0.0.1", family: 4 }),
+      lookup: async (host, opts) => {
+        if (typeof host !== "string") {
+          const err = new Error("hostname must be a string");
+          err.name = "DNSException"; err.code = "DNS_EINVAL"; err.syscall = "getaddrinfo";
+          throw err;
+        }
+        if (host.length > 65535) {
+          const err = new Error("hostname too long");
+          err.name = "DNSException"; err.code = "DNS_ENOTFOUND"; err.syscall = "getaddrinfo";
+          throw err;
+        }
+        const family = (opts && (opts.family === 6 || opts.family === "IPv6")) ? 6 : 4;
+        const addr = family === 6 ? "::1" : "127.0.0.1";
+        return [{ address: addr, family, ttl: 0 }];
+      },
       resolve: async () => ["127.0.0.1"],
       resolve4: async () => ["127.0.0.1"],
       resolve6: async () => ["::1"],
       getServers: () => ["127.0.0.1"],
       setDefaultResultOrder: () => {},
+      setServers: (servers) => {
+        if (!Array.isArray(servers)) {
+          const err = new TypeError("servers must be an array");
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        for (const s of servers) {
+          if (Array.isArray(s)) {
+            const [family, address, port] = s;
+            if (typeof family !== "number" || (family !== 0 && family !== 4 && family !== 6)) {
+              const err = new TypeError("family must be 0, 4, or 6");
+              err.code = "ERR_INVALID_ARG_VALUE";
+              throw err;
+            }
+            if (typeof address !== "string") {
+              const err = new TypeError("address must be a string");
+              err.code = "ERR_INVALID_ARG_TYPE";
+              throw err;
+            }
+            if (port !== undefined && port !== null && typeof port !== "number") {
+              const err = new TypeError("port must be a number");
+              err.code = "ERR_INVALID_ARG_TYPE";
+              throw err;
+            }
+          }
+        }
+      },
       prefetch: (host, _port) => {
         _stats.totalCount += 1;
         if (_cache.has(host)) {
