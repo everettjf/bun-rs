@@ -2832,7 +2832,10 @@ const BUN_HELPERS: &str = r##"
     },
     stringify(v, _opts) {
       const json = JSON.stringify(v);
-      return Bun.__rust_yaml_stringify(json);
+      let out = Bun.__rust_yaml_stringify(json);
+      // serde_yaml emits a trailing newline; Bun's stringify does not.
+      if (typeof out === "string" && out.endsWith("\n")) out = out.slice(0, -1);
+      return out;
     },
   };
   globalThis.YAML = Bun.YAML;
