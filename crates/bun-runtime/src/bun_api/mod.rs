@@ -1296,11 +1296,20 @@ const BUN_HELPERS: &str = r##"
       if (this.secure) s += `; Secure`;
       if (this.httpOnly) s += `; HttpOnly`;
       if (this.sameSite) s += `; SameSite=${this.sameSite[0].toUpperCase()+this.sameSite.slice(1)}`;
+      if (this.partitioned) s += `; Partitioned`;
       return s;
     }
     toJSON() { return { ...this }; }
     serialize() { return this.toString(); }
-    isExpired() { return this.expires && new Date(this.expires) < new Date(); }
+    isExpired() {
+      if (this.expires !== null && this.expires !== undefined) {
+        return new Date(this.expires) < new Date();
+      }
+      if (this.maxAge !== null && this.maxAge !== undefined) {
+        return this.maxAge <= 0;
+      }
+      return false;
+    }
     static parse(header) {
       // Single "name=value; attr=...; attr2; ..." Set-Cookie-style string.
       // Returns a Cookie instance whose .name/.value are the FIRST pair,
@@ -1355,9 +1364,27 @@ const BUN_HELPERS: &str = r##"
     constructor(init) {
       this._m = new Map();
       if (typeof init === "string") {
-        for (const [k, v] of Cookie.parse(init)._m) this._m.set(k, v);
+        // "Cookie: a=1; b=2" — split by "; ", set each as { name, value }.
+        const s = init.replace(/^Cookie:\s*/i, "");
+        for (const part of s.split(";")) {
+          const trim = part.trim();
+          if (!trim) continue;
+          const eq = trim.indexOf("=");
+          const k = eq < 0 ? trim : trim.slice(0, eq).trim();
+          const v = eq < 0 ? "" : trim.slice(eq + 1).trim();
+          this._m.set(k, new Cookie(k, v));
+        }
+      } else if (Array.isArray(init)) {
+        for (const pair of init) {
+          if (Array.isArray(pair) && pair.length >= 2) {
+            const [k, v] = pair;
+            this._m.set(k, v instanceof Cookie ? v : new Cookie(String(k), String(v)));
+          }
+        }
       } else if (init && typeof init === "object") {
-        for (const [k, v] of Object.entries(init)) this._m.set(k, v instanceof Cookie ? v : new Cookie(k, v));
+        for (const [k, v] of Object.entries(init)) {
+          this._m.set(k, v instanceof Cookie ? v : new Cookie(k, typeof v === "object" && v !== null ? (v.value !== undefined ? v.value : "") : v, typeof v === "object" && v !== null ? v : undefined));
+        }
       }
     }
     get size() { return this._m.size; }
