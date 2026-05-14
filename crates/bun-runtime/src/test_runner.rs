@@ -809,14 +809,26 @@ const GLOBALS: &str = r#"
     if (v instanceof Error) return v.name + ": " + v.message;
     if (typeof v === "bigint") return v.toString() + "n";
     if (typeof v === "symbol") return v.toString();
-    try { return JSON.stringify(v); } catch { return String(v); }
+    // Truncate deeply nested objects to avoid huge dumps (matches Bun's
+    // pretty-format depth/length caps).
+    const MAX_LEN = 4096;
+    try {
+      const s = JSON.stringify(v);
+      if (s && s.length > MAX_LEN) {
+        return s.slice(0, MAX_LEN) + "…";
+      }
+      return s;
+    } catch { return String(v); }
   }
   function mkExpect(received, not, label) {
     const fail = (msg) => { throw new Error(msg); };
     const check = (cond, expected, action) => {
       if (not ? cond : !cond) {
-        const base = `expect(${fmt(received)})${not ? ".not" : ""}.${action}(${expected !== undefined ? fmt(expected) : ""})`;
-        fail(label ? `${label}\n\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
+        // Emit the Bun-style "expect(received).<action>(expected)" hint in
+        // the message *before* the fmt'd values, so stderr grepping works.
+        const hint = `expect(received)${not ? ".not" : ""}.${action}(expected)`;
+        const base = `${hint} ${expected !== undefined ? "received: " + fmt(received) + " expected: " + fmt(expected) : "received: " + fmt(received)}`;
+        fail(label ? `${label}\n\n${hint}\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
       }
     };
     const obj = {
