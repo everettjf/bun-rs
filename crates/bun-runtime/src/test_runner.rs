@@ -584,7 +584,41 @@ const GLOBALS: &str = r#"
     if (i === 0) out += " [" + safeStringify(values) + "]";
     return out;
   }
-  g.test.each = (rows) => (name, fn) => {
+  // Build a function that returns the each-runner for either `test` or
+  // `test.skip` / `test.only` / etc. so chains like `test.each([...]).skipIf(b)`
+  // are themselves functions you can call with (name, fn).
+  function makeEach(targetFn) {
+    return (rows) => {
+      const runner = (name, fn) => {
+        for (const row of rows) {
+          const args = Array.isArray(row) ? row : [row];
+          const wantsDone = fn.length > args.length;
+          let wrapper;
+          if (wantsDone) {
+            wrapper = function (done) { return fn(...args, done); };
+          } else {
+            wrapper = () => fn(...args);
+          }
+          if (targetFn === g.test) {
+            pushTest(fmtEachName(name, row), wrapper);
+          } else if (targetFn === g.test.skip) {
+            pushTest(fmtEachName(name, row) + " (skipped)", wrapper, { skip: true });
+          } else {
+            pushTest(fmtEachName(name, row), wrapper);
+          }
+        }
+      };
+      // Chain modifiers: each(rows).skipIf(cond)(name, fn).
+      runner.skipIf = (cond) => cond ? makeEach(g.test.skip)(rows) : runner;
+      runner.todoIf = (cond) => cond ? makeEach(g.test.todo || g.test.skip)(rows) : runner;
+      runner.if = (cond) => cond ? runner : makeEach(g.test.skip)(rows);
+      runner.skip = makeEach(g.test.skip)(rows);
+      runner.only = runner; // treat .only same as plain
+      return runner;
+    };
+  }
+  // Original simple test.each retained for compat; new version supports chains.
+  g.test.each_old = (rows) => (name, fn) => {
     for (const row of rows) {
       const args = Array.isArray(row) ? row : [row];
       // Preserve done-callback semantics: if fn declares one more
@@ -600,6 +634,8 @@ const GLOBALS: &str = r#"
       pushTest(fmtEachName(name, row), wrapper);
     }
   };
+  // Replace test.each with the chainable version.
+  g.test.each = makeEach(g.test);
   g.it.each = g.test.each;
   g.describe.each = g.describe.each || ((rows) => (name, body) => {
     for (const row of rows) {
