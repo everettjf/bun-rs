@@ -209,9 +209,22 @@
       },
       formData() {
         if (!(this instanceof Request) && !(this instanceof Response)) {
-          const err = new TypeError("Expected this to be instanceof Request");
+          let msg = "Expected this to be instanceof Request";
+          if (this === null) msg = "Expected this to be instanceof Request, but received null";
+          else if (this === undefined) msg = "Expected this to be instanceof Request, but received undefined";
+          else {
+            const ty = typeof this;
+            if (ty === "object") {
+              const ctorName = this && this.constructor && this.constructor.name;
+              if (ctorName && ctorName !== "Object") msg = `Expected this to be instanceof Request, but received an instance of ${ctorName}`;
+              else msg = "Expected this to be instanceof Request, but received an instance of Object";
+            } else {
+              msg = `Expected this to be instanceof Request, but received type ${ty} ('${this}')`;
+            }
+          }
+          const err = new TypeError(msg);
           err.code = "ERR_INVALID_THIS";
-          return Promise.reject(err);
+          throw err;
         }
         if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
         this._bodyUsed = true;
