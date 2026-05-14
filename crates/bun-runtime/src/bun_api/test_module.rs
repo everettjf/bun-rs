@@ -87,9 +87,41 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             // checks before resolving normally. The next require/import of
             // `spec` will return the factory's result instead of the real
             // module. Async factories (returning a Promise) work too.
+            // Resolves relative specs against the caller's source file.
             mock.module = (spec, factory) => {
                 globalThis.__bun_mocked_modules = globalThis.__bun_mocked_modules || new Map();
-                globalThis.__bun_mocked_modules.set(String(spec), factory);
+                let s = String(spec);
+                globalThis.__bun_mocked_modules.set(s, factory);
+                // node builtin aliases: "fs/promises" ↔ "node:fs/promises".
+                if (s.startsWith("node:")) globalThis.__bun_mocked_modules.set(s.slice(5), factory);
+                else if (/^[a-z][a-z0-9_/-]*$/.test(s)) globalThis.__bun_mocked_modules.set("node:" + s, factory);
+                // Also register under the absolute resolved path so imports
+                // that go through file-system resolution find the mock.
+                if (s.startsWith("./") || s.startsWith("../")) {
+                    try {
+                        const stack = new Error().stack || "";
+                        const lines = stack.split("\n");
+                        for (const ln of lines) {
+                            const m = ln.match(/(\/[^()\s:]+\.(ts|tsx|js|jsx|mjs|cjs))/);
+                            if (m && m[1] && !m[1].startsWith("/[")) {
+                                const path = require("node:path");
+                                const dir = path.dirname(m[1]);
+                                const abs = path.resolve(dir, s);
+                                // Try common extensions if no extension.
+                                const tries = [abs, abs + ".ts", abs + ".js", abs + ".tsx", abs + ".jsx", abs + ".mjs"];
+                                for (const t of tries) {
+                                    globalThis.__bun_mocked_modules.set(t, factory);
+                                }
+                                break;
+                            }
+                        }
+                    } catch {}
+                }
+                // Also invalidate cached exports for this spec so the next
+                // import re-evaluates through the mock factory.
+                if (globalThis.__bun_invalidate_module) {
+                    try { globalThis.__bun_invalidate_module(s); } catch {}
+                }
             };
             mock.restore = () => {};
             mock.clearAllMocks = () => {};

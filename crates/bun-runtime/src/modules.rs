@@ -46,6 +46,34 @@ pub fn install_module_loader(ctx: &Context) {
         .expect("install __bun_require");
     std::mem::forget(cb);
 
+    // __bun_invalidate_module(spec) — drop the module cache entry for the
+    // given absolute path or for any path whose suffix matches the relative
+    // spec. Used by mock.module to force re-evaluation through the mock.
+    let invalidate_cb = Callback::new(ctx, "__bun_invalidate_module", |args| {
+        let spec = args.get(0).to_string();
+        CACHE.with(|c| {
+            let mut cache = c.borrow_mut();
+            let to_remove: Vec<PathBuf> = cache
+                .keys()
+                .filter(|p| {
+                    let s = p.to_string_lossy();
+                    s == spec
+                        || s.ends_with(&spec)
+                        || s.ends_with(&format!("/{}", spec.trim_start_matches("./")))
+                })
+                .cloned()
+                .collect();
+            for k in to_remove {
+                cache.remove(&k);
+            }
+        });
+        Ok(Value::new_undefined(args.context()))
+    });
+    ctx.global_object()
+        .set_property("__bun_invalidate_module", &invalidate_cb.value_in(ctx))
+        .expect("install __bun_invalidate_module");
+    std::mem::forget(invalidate_cb);
+
     // Synchronous `require` global — for code (typically `.js`/`.cjs` files or
     // Bun's own test suite) that calls `require("...")` directly instead of
     // going through the rewriter's `await __bun_require` form. We resolve by
