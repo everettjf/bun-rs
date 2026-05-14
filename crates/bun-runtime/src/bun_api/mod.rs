@@ -1510,7 +1510,8 @@ const BUN_HELPERS: &str = r##"
       this.value = String(value !== undefined ? value : "");
       const o = opts || {};
       this.domain = o.domain || null;
-      this.path = o.path || "/";
+      // path is omitted-by-default; when `path` is set to "" it stays empty.
+      this.path = o.path !== undefined ? o.path : "/";
       // Validate expires: must be Date | Number(finite) | null/undefined.
       if (o.expires !== undefined && o.expires !== null) {
         if (o.expires instanceof Date) {
@@ -1537,9 +1538,12 @@ const BUN_HELPERS: &str = r##"
       this.partitioned = !!o.partitioned;
     }
     toString() {
-      let s = `${encodeURIComponent(this.name)}=${encodeURIComponent(this.value)}`;
-      if (this.path) s += `; Path=${this.path}`;
+      // Cookie names are passed through verbatim; values are percent-encoded
+      // only for characters that would break the cookie syntax (RFC 6265 token).
+      let s = `${this.name}=${encodeURIComponent(this.value)}`;
+      // Bun's attribute order: Domain, Path, Max-Age, Expires, Secure, HttpOnly, SameSite, Partitioned.
       if (this.domain) s += `; Domain=${this.domain}`;
+      if (this.path) s += `; Path=${this.path}`;
       if (this.maxAge != null) s += `; Max-Age=${this.maxAge}`;
       if (this.expires) s += `; Expires=${new Date(this.expires).toUTCString()}`;
       if (this.secure) s += `; Secure`;
@@ -1548,7 +1552,21 @@ const BUN_HELPERS: &str = r##"
       if (this.partitioned) s += `; Partitioned`;
       return s;
     }
-    toJSON() { return { ...this }; }
+    toJSON() {
+      const o = {
+        name: this.name,
+        value: this.value,
+        domain: this.domain || "",
+        path: this.path || "",
+        secure: this.secure,
+        sameSite: this.sameSite,
+        httpOnly: this.httpOnly,
+        partitioned: this.partitioned,
+      };
+      if (this.expires) o.expires = this.expires;
+      if (this.maxAge != null) o.maxAge = this.maxAge;
+      return o;
+    }
     serialize() { return this.toString(); }
     isExpired() {
       if (this.expires !== null && this.expires !== undefined) {
@@ -1627,9 +1645,13 @@ const BUN_HELPERS: &str = r##"
           const trim = part.trim();
           if (!trim) continue;
           const eq = trim.indexOf("=");
-          const k = eq < 0 ? trim : trim.slice(0, eq).trim();
-          const v = eq < 0 ? "" : trim.slice(eq + 1).trim();
-          this._pre.set(k, new Cookie(k, v));
+          if (eq < 0) continue; // Bun ignores attr-only entries (e.g. "fizz")
+          const k = trim.slice(0, eq).trim();
+          let v = trim.slice(eq + 1).trim();
+          // URL-decode but preserve surrounding quotes as part of the value.
+          try { v = decodeURIComponent(v); } catch {}
+          if (!k) continue;
+          this._pre.set(k, new Cookie(k, v, { path: "" }));
         }
       } else if (Array.isArray(init)) {
         for (const pair of init) {

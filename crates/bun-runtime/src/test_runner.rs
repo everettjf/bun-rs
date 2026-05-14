@@ -217,10 +217,12 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     throw new Error(`expect.assertions(${st.expected}): expected ${st.expected} assertions but got ${st.count}`);
                                 }
                                 if (t.failing) {
-                                    throw new Error("test was marked .failing but passed");
+                                    const err = new Error("test was marked .failing but passed");
+                                    err.__bun_failing_marker = true;
+                                    throw err;
                                 }
                             } catch (e) {
-                                if (t.failing) {
+                                if (t.failing && !(e && e.__bun_failing_marker)) {
                                     // .failing: error is expected; treat as pass.
                                     // afterEach: inner→outer (reverse order).
                                     for (let i = t.afterEach.length - 1; i >= 0; i--) {
