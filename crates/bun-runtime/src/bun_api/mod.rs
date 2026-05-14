@@ -1570,18 +1570,68 @@ const BUN_HELPERS: &str = r##"
       }
     }
     const cp = require("node:child_process");
+    // Default stdout/stderr to "pipe" so .stdout.text() works (Bun default).
+    const stdioDefault = "pipe";
+    const stdoutOpt = options.stdout || stdioDefault;
+    const stderrOpt = options.stderr || stdioDefault;
+    const stdinOpt = options.stdin || "ignore";
+    function toNodeStdio(opt) {
+      if (opt === "pipe") return "pipe";
+      if (opt === "ignore" || opt === null) return "ignore";
+      if (opt === "inherit") return "inherit";
+      return "pipe";
+    }
     const proc = cp.spawn(cmd, args, {
       cwd: options.cwd,
       env: options.env,
+      stdio: [toNodeStdio(stdinOpt), toNodeStdio(stdoutOpt), toNodeStdio(stderrOpt)],
     });
     // proc.stdout / proc.stderr are now Buffer (Uint8Array). Wrap them as
     // Bun's "Subprocess.stdout" interface: a Uint8Array that also has
     // .text() / .json() / .bytes() / .arrayBuffer() async methods AND
     // doubles as a readable stream via .getReader (so `new Response(stdout)`
     // works).
-    function wrapStdio(buf) {
-      if (!buf) return null;
-      const u = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+    function wrapStdio(streamOrBuf) {
+      if (!streamOrBuf) return null;
+      // Node async spawn gives us a Readable stream; drain it on demand.
+      if (typeof streamOrBuf.on === "function" && typeof streamOrBuf.read === "function") {
+        const stream = streamOrBuf;
+        let cached = null;
+        const drain = () => {
+          if (cached) return cached;
+          cached = new Promise((resolve, reject) => {
+            const chunks = [];
+            stream.on("data", c => chunks.push(c instanceof Uint8Array ? c : new Uint8Array(c)));
+            stream.on("end", () => {
+              let total = 0;
+              for (const c of chunks) total += c.byteLength;
+              const out = new Uint8Array(total);
+              let off = 0;
+              for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+              resolve(out);
+            });
+            stream.on("error", reject);
+          });
+          return cached;
+        };
+        const obj = {
+          async text() { const b = await drain(); return new TextDecoder("utf-8").decode(b); },
+          async json() { const b = await drain(); return JSON.parse(new TextDecoder("utf-8").decode(b)); },
+          async bytes() { return drain(); },
+          async arrayBuffer() { const b = await drain(); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); },
+          async blob() { const b = await drain(); return new Blob([b]); },
+          stream() {
+            return new ReadableStream({
+              async start(c) { const b = await drain(); if (b.byteLength > 0) c.enqueue(b); c.close(); }
+            });
+          },
+          getReader() { return this.stream().getReader(); },
+          [Symbol.asyncIterator]: async function* () { yield await drain(); },
+        };
+        return obj;
+      }
+      // Sync spawn path: already a Buffer/Uint8Array.
+      const u = streamOrBuf instanceof Uint8Array ? streamOrBuf : new Uint8Array(streamOrBuf);
       u.text = async () => new TextDecoder("utf-8").decode(u);
       u.json = async () => JSON.parse(new TextDecoder("utf-8").decode(u));
       u.bytes = async () => u;
