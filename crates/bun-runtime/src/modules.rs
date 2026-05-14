@@ -335,13 +335,6 @@ fn load_module<'ctx>(
 
     // Prepare (read + transpile + rewrite ESM).
     let prepared = bun_loader::prepare(&abs)?;
-    // Register the source map so error stacks can be remapped to the user's
-    // original lines.
-    crate::sourcemap::register(
-        prepared.path.clone(),
-        prepared.line_map.clone(),
-        &prepared.original_source,
-    );
     let parent = abs.parent().unwrap_or_else(|| Path::new("."));
 
     // Wrap in an async function. We pass an indirection object `__module`
@@ -382,6 +375,19 @@ fn load_module<'ctx>(
         "{}{}",
         if user_decls_fn { "" } else { "var __filename = __bun_path;\n" },
         if user_decls_dn { "" } else { "var __dirname = __bun_dirname;\n" },
+    );
+    // Register the source map so error stacks can be remapped to the user's
+    // original lines. Prefix is `(async function () {` (1) + the 3 fixed
+    // `const __exports/exports/module` lines + the (0-2) predecls lines +
+    // the `local_require` line.
+    let prefix_lines = 4
+        + predecls.lines().count() as u32
+        + local_require.lines().count() as u32;
+    crate::sourcemap::register(
+        prepared.path.clone(),
+        prepared.line_map.clone(),
+        &prepared.original_source,
+        prefix_lines,
     );
     let wrapped = if is_sync {
         format!(

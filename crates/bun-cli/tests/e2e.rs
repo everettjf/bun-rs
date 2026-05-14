@@ -56,7 +56,8 @@ fn version_flag() {
     let out = bun_rs().arg("--version").output().unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.starts_with("bun-rs "), "got: {s:?}");
+    // bun-rs emits a bare version number (matches Bun's output format).
+    assert_eq!(s.trim(), env!("CARGO_PKG_VERSION"), "got: {s:?}");
 }
 
 #[test]

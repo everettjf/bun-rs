@@ -29,11 +29,18 @@ struct ModuleMap {
     line_map: Vec<u32>,
     /// 1-indexed line-count of the original source (used to detect "synthetic line, just hide it" vs "real line").
     original_lines: u32,
+    /// Number of wrapper-prefix lines inserted before the user body — the
+    /// `(async function (...) {` line plus the fixed `const __exports / exports
+    /// / module` declarations plus any per-module predecls (`var __filename`,
+    /// `var __dirname`) plus the `const require = ...` injection. Varies per
+    /// module because predecls are conditionally inserted.
+    prefix_lines: u32,
 }
 
 /// Register a module's source map under its absolute path. Called from the
-/// module loader after a module is prepared.
-pub fn register(path: PathBuf, line_map: Vec<u32>, original_source: &str) {
+/// module loader after a module is prepared. `prefix_lines` is the number of
+/// wrapper lines inserted before the user body — see [`ModuleMap`].
+pub fn register(path: PathBuf, line_map: Vec<u32>, original_source: &str, prefix_lines: u32) {
     let original_lines = original_source.lines().count().max(1) as u32;
     MAPS.with(|m| {
         m.borrow_mut().insert(
@@ -41,6 +48,7 @@ pub fn register(path: PathBuf, line_map: Vec<u32>, original_source: &str) {
             ModuleMap {
                 line_map,
                 original_lines,
+                prefix_lines,
             },
         );
     });
@@ -94,13 +102,11 @@ fn remap_frame(line: &str) -> Option<String> {
     let mapped = MAPS.with(|m| {
         let map = m.borrow();
         let entry = map.get(&path)?;
-        // Wrapper prefix: `(async function (...) {` (1) + `const __exports`,
-        // `const exports`, `const module` (3) = 4 lines before the body.
-        const WRAPPER_PREFIX_LINES: u32 = 4;
-        if line_no <= WRAPPER_PREFIX_LINES {
+        let prefix = entry.prefix_lines.max(1);
+        if line_no <= prefix {
             return Some(("wrapper-prefix".to_string(), entry.original_lines));
         }
-        let body_line = (line_no - WRAPPER_PREFIX_LINES) as usize;
+        let body_line = (line_no - prefix) as usize;
         // line_map is 0-indexed; body_line is 1-indexed.
         let user_line = entry.line_map.get(body_line - 1).copied().unwrap_or(0);
         Some(("ok".to_string(), user_line))
@@ -132,7 +138,7 @@ mod tests {
         // Wrapper prefix is 4 lines, so JSC line N = body line (N-4).
         let path = PathBuf::from("/tmp/test.ts");
         // line_map[0]=0 (synthetic), [1]=5, [2]=7.
-        register(path.clone(), vec![0, 5, 7], "1\n2\n3\n4\n5\n6\n7\n");
+        register(path.clone(), vec![0, 5, 7], "1\n2\n3\n4\n5\n6\n7\n", 4);
         // JSC line 7 → body line 3 → user line 7.
         let out = remap_frame("f@/tmp/test.ts:7:10").unwrap();
         assert_eq!(out, "f@/tmp/test.ts:7");
@@ -141,7 +147,7 @@ mod tests {
     #[test]
     fn remap_frame_synthetic_tag() {
         let path = PathBuf::from("/tmp/test2.ts");
-        register(path.clone(), vec![0, 0, 5], "1\n2\n3\n4\n5\n");
+        register(path.clone(), vec![0, 0, 5], "1\n2\n3\n4\n5\n", 4);
         // JSC line 5 → body line 1 → user line 0 (synthetic).
         let out = remap_frame("f@/tmp/test2.ts:5:0").unwrap();
         assert!(out.contains("<bunrs-internal>"));
@@ -149,20 +155,32 @@ mod tests {
 
     #[test]
     fn remap_frame_inside_wrapper_prefix_returns_none() {
-        // Lines 1..=WRAPPER_PREFIX_LINES (1..=4) live in the wrapper itself
+        // Lines 1..=prefix_lines (1..=4) live in the wrapper itself
         // and shouldn't be reported to the user — return None so the caller
         // emits the frame as-is (or drops it upstream).
         let path = PathBuf::from("/tmp/wrap-test.ts");
-        register(path.clone(), vec![1, 2, 3], "a\nb\nc\n");
+        register(path.clone(), vec![1, 2, 3], "a\nb\nc\n", 4);
         assert!(remap_frame("f@/tmp/wrap-test.ts:1:0").is_none());
         assert!(remap_frame("f@/tmp/wrap-test.ts:4:0").is_none());
+    }
+
+    #[test]
+    fn remap_frame_respects_dynamic_prefix() {
+        // Module with 2 predecls + 1 local_require → prefix = 7. JSC line 11
+        // (= prefix 7 + body line 4) must map to user line 4 via line_map[3].
+        let path = PathBuf::from("/tmp/dyn-prefix.ts");
+        register(path.clone(), vec![1, 2, 3, 4, 5], "a\nb\nc\nd\ne\n", 7);
+        let out = remap_frame("boom@/tmp/dyn-prefix.ts:11:3").unwrap();
+        assert_eq!(out, "boom@/tmp/dyn-prefix.ts:4");
+        // And the wrapper-prefix range now extends through line 7.
+        assert!(remap_frame("f@/tmp/dyn-prefix.ts:7:0").is_none());
     }
 
     #[test]
     fn remap_frame_without_at_marker() {
         // `path:LINE:COL` shape (no `func@` prefix).
         let path = PathBuf::from("/tmp/noat.ts");
-        register(path.clone(), vec![10, 11, 12], "x\ny\nz\n");
+        register(path.clone(), vec![10, 11, 12], "x\ny\nz\n", 4);
         let out = remap_frame("/tmp/noat.ts:6:0").unwrap();
         assert_eq!(out, "/tmp/noat.ts:11");
     }
@@ -177,7 +195,7 @@ mod tests {
     #[test]
     fn remap_stack_handles_mixed_frames() {
         let path = PathBuf::from("/tmp/mixed.ts");
-        register(path.clone(), vec![1, 2, 3, 4, 5], "a\nb\nc\nd\ne\n");
+        register(path.clone(), vec![1, 2, 3, 4, 5], "a\nb\nc\nd\ne\n", 4);
         let input = "f@/tmp/mixed.ts:6:0\nunrelated@/other/file.ts:99:0\ng@/tmp/mixed.ts:7:0";
         let out = remap_stack(input);
         let lines: Vec<&str> = out.lines().collect();

@@ -203,19 +203,38 @@ fn run() -> Result<(), RuntimeError> {
             let mut all_argv = vec![bun_exe_path(), "[inline]".to_string()];
             all_argv.extend(script_args);
             let rt = Runtime::new(all_argv);
-            // Wrap in async IIFE so top-level `await` works in `-e` code.
-            // Store any rejection on globalThis so we can pick it up after drain.
-            let wrapped = format!(
-                "(async function () {{ try {{ {} }} catch (e) {{ globalThis.__bun_e_err = e; throw e; }} }})().catch(e => {{ globalThis.__bun_e_err = e; }})",
-                code
-            );
+            // Wrap in async IIFE so top-level `await` works in `-e` / `-p`.
+            // For `-p`, capture the awaited expression result on globalThis so
+            // we can print it after the runtime drains (otherwise we'd be
+            // looking at the wrapper Promise itself).
+            let wrapped = if print_result {
+                format!(
+                    "(async function () {{ try {{ globalThis.__bun_p_value = await ({}); }} catch (e) {{ globalThis.__bun_e_err = e; throw e; }} }})().catch(e => {{ globalThis.__bun_e_err = e; }})",
+                    code
+                )
+            } else {
+                format!(
+                    "(async function () {{ try {{ {} }} catch (e) {{ globalThis.__bun_e_err = e; throw e; }} }})().catch(e => {{ globalThis.__bun_e_err = e; }})",
+                    code
+                )
+            };
             let result = rt.eval_string(&wrapped, "[inline]");
             match result {
-                Ok(v) => {
-                    if print_result && !v.is_undefined() {
-                        println!("{}", v.to_string());
-                    }
+                Ok(_) => {
                     rt.drain();
+                    if print_result {
+                        if let Ok(v) = rt.ctx.eval(
+                            "globalThis.__bun_p_value",
+                            Some("[inline-print]"),
+                        ) {
+                            if !v.is_undefined() {
+                                println!("{}", v.to_string());
+                            }
+                        }
+                        let _ = rt
+                            .ctx
+                            .eval("delete globalThis.__bun_p_value", Some("[inline-print-cleanup]"));
+                    }
                     // Check for any captured rejection.
                     let err_check = rt.ctx.eval(
                         "globalThis.__bun_e_err",
