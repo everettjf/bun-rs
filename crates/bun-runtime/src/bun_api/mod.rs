@@ -2921,6 +2921,17 @@ const BUN_HELPERS: &str = r##"
           _stats.size = _cache.size;
         }
       },
+      // Hook called by fetch on each request. If the host was prefetched
+      // (or seen before), bump cacheHitsCompleted so dns.getCacheStats
+      // reflects request activity.
+      __onFetch: (host) => {
+        if (_cache.has(host)) {
+          _stats.cacheHitsCompleted += 1;
+        } else {
+          _cache.add(host);
+          _stats.size = _cache.size;
+        }
+      },
       getCacheStats: () => ({ ..._stats }),
       cancel: () => {},
     };

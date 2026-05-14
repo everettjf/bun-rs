@@ -424,6 +424,13 @@
     } else {
       u = String(url);
     }
+    // Trip dns prefetch cache so dns.getCacheStats reflects fetch activity.
+    try {
+      const m = u.match(/^https?:\/\/([^\/:]+)/i);
+      if (m && typeof Bun !== "undefined" && Bun.dns && Bun.dns.__onFetch) {
+        Bun.dns.__onFetch(m[1]);
+      }
+    } catch {}
     const i = init || {};
     const raw = await __bun_fetch(u, {
       method: (i.method || "GET").toUpperCase(),
