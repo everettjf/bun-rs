@@ -64,6 +64,12 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
     let rt = crate::Runtime::new(vec![crate::bun_exe_path(), "test".to_string()]);
     install_globals(&rt.ctx);
+    // Emit Bun-style header on stdout: "bun test <version>".
+    println!(
+        "bun test {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        "bun-rs-dev"
+    );
 
     // bunfig.toml preload: parse the [test].preload entry and load each
     // preload file BEFORE evaluating any test file. Lets test setups

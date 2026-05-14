@@ -69,6 +69,9 @@ pub fn install_bun(ctx: &Context) {
     .unwrap();
     bun.set_property("revision", &Value::new_string(ctx, "bun-rs-dev"))
         .unwrap();
+    let version_with_sha = format!("{} (bun-rs-dev)", env!("CARGO_PKG_VERSION"));
+    bun.set_property("version_with_sha", &Value::new_string(ctx, &version_with_sha))
+        .unwrap();
 
     file::install(ctx, &bun);
     serve::install(ctx, &bun);
