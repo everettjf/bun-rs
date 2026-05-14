@@ -884,20 +884,62 @@ const BUN_HELPERS: &str = r##"
       "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#x27;"
     }[c]));
   };
-  // stringWidth: very rough — ASCII = 1, wide CJK ≈ 2, control = 0.
-  Bun.stringWidth = function (s) {
+  // stringWidth: ANSI-aware width measurement matching the `string-width` npm
+  // package. Strips ANSI escapes, then counts each char's column width:
+  // control = 0, wide CJK/emoji = 2, ASCII/Latin = 1. Combining marks (Mn)
+  // collapse into the preceding character.
+  Bun.stringWidth = function (s, opts) {
+    const str = String(s);
     let w = 0;
-    for (const ch of String(s)) {
-      const c = ch.codePointAt(0);
-      if (c < 0x20 || c === 0x7f) continue;
-      if (c >= 0x1100 && (c <= 0x115f || c === 0x2329 || c === 0x232a
-        || (c >= 0x2e80 && c <= 0xa4cf && c !== 0x303f)
-        || (c >= 0xac00 && c <= 0xd7a3)
-        || (c >= 0xf900 && c <= 0xfaff)
-        || (c >= 0xfe30 && c <= 0xfe4f)
-        || (c >= 0xff00 && c <= 0xff60)
-        || (c >= 0xffe0 && c <= 0xffe6))) w += 2;
-      else w += 1;
+    let i = 0;
+    while (i < str.length) {
+      // Always skip ANSI escape sequences — npm string-width does too.
+      if (str.charCodeAt(i) === 0x1b && str.charAt(i + 1) === "[") {
+        let j = i + 2;
+        while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
+        while (j < str.length && str.charCodeAt(j) >= 0x20 && str.charCodeAt(j) <= 0x2f) j++;
+        if (j < str.length) j++;
+        i = j;
+        continue;
+      }
+      // Decode codepoint (may be a surrogate pair).
+      const c0 = str.charCodeAt(i);
+      let cp = c0, len = 1;
+      if (c0 >= 0xd800 && c0 < 0xdc00 && i + 1 < str.length) {
+        const c1 = str.charCodeAt(i + 1);
+        if (c1 >= 0xdc00 && c1 < 0xe000) {
+          cp = 0x10000 + ((c0 - 0xd800) << 10) + (c1 - 0xdc00);
+          len = 2;
+        }
+      }
+      i += len;
+      if (cp < 0x20 || cp === 0x7f) continue;
+      // Combining marks (Mn) — width 0. Coarse range checks.
+      if ((cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x0483 && cp <= 0x0489)
+        || (cp >= 0x07a6 && cp <= 0x07b0) || (cp >= 0x0900 && cp <= 0x0903)
+        || (cp >= 0x093c && cp <= 0x094f) || (cp >= 0x0951 && cp <= 0x0957)
+        || (cp >= 0x0962 && cp <= 0x0963) || (cp >= 0x1ab0 && cp <= 0x1aff)
+        || (cp >= 0x1dc0 && cp <= 0x1dff) || (cp >= 0x200b && cp <= 0x200f)
+        || (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2060 && cp <= 0x206f)
+        || (cp >= 0x20d0 && cp <= 0x20ff) || (cp >= 0xfe00 && cp <= 0xfe0f)
+        || (cp >= 0xfe20 && cp <= 0xfe2f) || cp === 0xfeff) continue;
+      // ZWJ — width 0
+      if (cp === 0x200d) continue;
+      // Wide ranges (East-Asian width F + W) including emoji blocks.
+      const wide = (cp >= 0x1100 && cp <= 0x115f)
+        || cp === 0x2329 || cp === 0x232a
+        || (cp >= 0x2e80 && cp <= 0x303e)
+        || (cp >= 0x3041 && cp <= 0x33ff)
+        || (cp >= 0x3400 && cp <= 0x4dbf)
+        || (cp >= 0x4e00 && cp <= 0x9fff)
+        || (cp >= 0xa000 && cp <= 0xa4cf)
+        || (cp >= 0xac00 && cp <= 0xd7a3)
+        || (cp >= 0xf900 && cp <= 0xfaff)
+        || (cp >= 0xfe30 && cp <= 0xfe4f)
+        || (cp >= 0xff00 && cp <= 0xff60)
+        || (cp >= 0xffe0 && cp <= 0xffe6)
+        || (cp >= 0x20000 && cp <= 0x2fffd);
+      w += wide ? 2 : 1;
     }
     return w;
   };
@@ -1803,7 +1845,103 @@ const BUN_HELPERS: &str = r##"
     }
     return wrapped.join("\n");
   };
-  Bun.sliceAnsi = (s, a, b) => String(s).slice(a, b);
+  // Bun.sliceAnsi(s, begin, end) — slice a string by *visual* columns,
+  // skipping ANSI escape sequences and counting CJK/wide chars as width 2.
+  // Re-emits any active SGR codes at the slice boundary so colors don't
+  // bleed past the visible region.
+  Bun.sliceAnsi = function (s, begin, end) {
+    s = String(s);
+    // Visible width — used for negative-index normalization.
+    function visibleWidth(t) {
+      let w = 0, i = 0;
+      while (i < t.length) {
+        if (t.charCodeAt(i) === 0x1b && t.charAt(i + 1) === "[") {
+          let j = i + 2;
+          while (j < t.length && t.charCodeAt(j) >= 0x30 && t.charCodeAt(j) <= 0x3f) j++;
+          while (j < t.length && t.charCodeAt(j) >= 0x20 && t.charCodeAt(j) <= 0x2f) j++;
+          if (j < t.length) j++;
+          i = j;
+          continue;
+        }
+        i++;
+        w++;
+      }
+      return w;
+    }
+    const total = visibleWidth(s);
+    if (typeof begin !== "number") begin = 0;
+    if (typeof end !== "number") end = total;
+    if (begin < 0) begin = Math.max(0, total + begin);
+    if (end < 0) end = Math.max(0, total + end);
+    if (begin >= end) return "";
+    // East-Asian wide char detection. Bun uses ICU widths internally; this
+    // is a coarse approximation covering CJK Han, hangul, kana, full-width.
+    function isWide(cp) {
+      return (cp >= 0x1100 && cp <= 0x115f)
+        || (cp >= 0x2e80 && cp <= 0x303e)
+        || (cp >= 0x3041 && cp <= 0x33ff)
+        || (cp >= 0x3400 && cp <= 0x4dbf)
+        || (cp >= 0x4e00 && cp <= 0x9fff)
+        || (cp >= 0xa000 && cp <= 0xa4cf)
+        || (cp >= 0xac00 && cp <= 0xd7a3)
+        || (cp >= 0xf900 && cp <= 0xfaff)
+        || (cp >= 0xfe30 && cp <= 0xfe4f)
+        || (cp >= 0xff00 && cp <= 0xff60)
+        || (cp >= 0xffe0 && cp <= 0xffe6)
+        || (cp >= 0x1f300 && cp <= 0x1f64f)
+        || (cp >= 0x1f680 && cp <= 0x1f6ff)
+        || (cp >= 0x20000 && cp <= 0x2fffd);
+    }
+    let out = "";
+    let pos = 0; // visual column position
+    let active = ""; // accumulated active SGR codes
+    let i = 0;
+    while (i < s.length) {
+      // ANSI CSI sequence \x1b[...m
+      if (s.charCodeAt(i) === 0x1b && s.charAt(i + 1) === "[") {
+        let j = i + 2;
+        while (j < s.length && s.charCodeAt(j) >= 0x30 && s.charCodeAt(j) <= 0x3f) j++;
+        while (j < s.length && s.charCodeAt(j) >= 0x20 && s.charCodeAt(j) <= 0x2f) j++;
+        if (j < s.length) j++;
+        const seq = s.slice(i, j);
+        // Track active SGR sequences ("m" terminator) so we can re-emit.
+        if (seq.endsWith("m")) {
+          if (seq === "\x1b[0m" || seq === "\x1b[m" || seq === "\x1b[39m" || seq === "\x1b[49m" || seq === "\x1b[22m") {
+            active = ""; // reset / specific resets
+          } else {
+            active += seq;
+          }
+        }
+        if (pos >= begin && pos < end) out += seq;
+        i = j;
+        continue;
+      }
+      // Char advance — figure out its visual width and codepoint length.
+      const c = s.charCodeAt(i);
+      let cp = c, len = 1;
+      if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(i + 1);
+        cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+        len = 2;
+      }
+      const w = isWide(cp) ? 2 : 1;
+      const startCol = pos;
+      const endCol = pos + w;
+      if (startCol >= begin && endCol <= end) {
+        if (pos === begin && active && out.length === 0) out = active + out;
+        out += s.substr(i, len);
+      }
+      pos = endCol;
+      i += len;
+      if (pos >= end) break;
+    }
+    // If we emit non-empty content and the slice ended without seeing a
+    // reset sequence, append the appropriate close (\x1b[39m for color).
+    if (active && out.length > 0 && !out.endsWith("\x1b[39m") && !out.endsWith("\x1b[0m") && !out.endsWith("\x1b[22m")) {
+      out += "\x1b[39m";
+    }
+    return out;
+  };
     Bun.stripANSI = (s) => {
     let out = "";
     const str = String(s);
