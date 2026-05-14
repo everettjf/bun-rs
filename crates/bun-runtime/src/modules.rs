@@ -804,11 +804,19 @@ fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>>
             version: "18.3.1",
             default: { createElement: (...a) => ({ type: a[0], props: { ...a[1], children: a.slice(2) } }), Fragment: Symbol.for("react.fragment") },
         })"#),
-        "react-dom" | "react-dom/server" => Some(r#"({
+        "react-dom" | "react-dom/server" | "react-dom/server.browser" | "react-dom/client" | "react-dom/server.node" => Some(r#"({
             __esModule: true,
+            version: "18.3.0",
             renderToString: (el) => "<div>" + JSON.stringify(el) + "</div>",
             renderToStaticMarkup: (el) => "<div>" + JSON.stringify(el) + "</div>",
             renderToReadableStream: async (el) => new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("<div>" + JSON.stringify(el) + "</div>")); c.close(); } }),
+            hydrate: () => {},
+            render: () => {},
+            createRoot: () => ({ render: () => {}, unmount: () => {} }),
+            hydrateRoot: () => ({ render: () => {}, unmount: () => {} }),
+            createPortal: (el, _container) => el,
+            flushSync: (fn) => fn(),
+            unstable_batchedUpdates: (fn) => fn(),
         })"#),
         "vitest" => Some(r#"(() => {
             const t = require("bun:test");
