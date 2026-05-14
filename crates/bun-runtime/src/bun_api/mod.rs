@@ -1984,12 +1984,43 @@ const BUN_HELPERS: &str = r##"
     const trim = !opts || opts.trim !== false;
     const hard = !!(opts && opts.hard);
     const wordWrap = !opts || opts.wordWrap !== false;
-    function visibleLength(t) { return t.replace(/\x1b\[[0-9;]*m/g, "").length; }
+    function isWide(cp) {
+      return (cp >= 0x1100 && cp <= 0x115f)
+        || (cp >= 0x2e80 && cp <= 0x303e)
+        || (cp >= 0x3041 && cp <= 0x33ff)
+        || (cp >= 0x3400 && cp <= 0x4dbf)
+        || (cp >= 0x4e00 && cp <= 0x9fff)
+        || (cp >= 0xa000 && cp <= 0xa4cf)
+        || (cp >= 0xac00 && cp <= 0xd7a3)
+        || (cp >= 0xf900 && cp <= 0xfaff)
+        || (cp >= 0xfe30 && cp <= 0xfe4f)
+        || (cp >= 0xff00 && cp <= 0xff60)
+        || (cp >= 0xffe0 && cp <= 0xffe6);
+    }
+    function visibleLength(t) {
+      const stripped = t.replace(/\x1b\[[0-9;]*m/g, "");
+      let w = 0;
+      for (const ch of stripped) {
+        w += isWide(ch.codePointAt(0)) ? 2 : 1;
+      }
+      return w;
+    }
     function chunkBreak(word, w) {
-      // Break a word that exceeds w into pieces of length w.
+      // Break a word that exceeds visual width `w` into pieces of width w.
       const out = [];
-      let i = 0;
-      while (i < word.length) { out.push(word.slice(i, i + w)); i += w; }
+      let cur = "";
+      let curW = 0;
+      for (const ch of word) {
+        const cw = isWide(ch.codePointAt(0)) ? 2 : 1;
+        if (curW + cw > w && cur) {
+          out.push(cur);
+          cur = "";
+          curW = 0;
+        }
+        cur += ch;
+        curW += cw;
+      }
+      if (cur) out.push(cur);
       return out;
     }
     const paragraphs = s.split("\n");
