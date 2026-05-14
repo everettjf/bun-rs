@@ -238,7 +238,16 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
         let unix_path = opts_obj
             .get_property("unix")
             .ok()
-            .and_then(|v| if v.is_string() { Some(v.to_string()) } else { None });
+            .and_then(|v| {
+                if v.is_undefined() || v.is_null() {
+                    None
+                } else if v.is_string() {
+                    Some(v.to_string())
+                } else {
+                    // Non-string unix path → mark as invalid so .url throws.
+                    Some(format!("__INVALID__"))
+                }
+            });
         let user_hostname = opts_obj
             .get_property("hostname")
             .ok()
@@ -258,8 +267,16 @@ pub fn install(ctx: &Context, bun: &bun_jsc::Object<'_>) {
             obj.set_property("hostname", &Value::new_string(ctx, h))
                 .unwrap();
         }
-        obj.set_property("url", &Value::new_string(ctx, &url_str))
-            .unwrap();
+        // For invalid unix (non-string), install a `url` getter that throws.
+        if unix_path.as_deref() == Some("__INVALID__") {
+            let _ = ctx.eval(
+                r#"(function(s){ Object.defineProperty(s, "url", { get() { throw new TypeError("invalid unix socket path"); }, configurable: true }); return s; })"#,
+                Some("[serve-invalid-url]"),
+            ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[v.clone()])));
+        } else {
+            obj.set_property("url", &Value::new_string(ctx, &url_str))
+                .unwrap();
+        }
         let stop_clone2 = stop_flag.clone();
         let stop_cb = Callback::new(ctx, "stop", move |args| {
             stop_clone2.store(true, Ordering::SeqCst);
