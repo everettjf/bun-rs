@@ -1342,10 +1342,15 @@ const BUN_HELPERS: &str = r##"
     }
     static parse(header) {
       // Single "name=value; attr=...; attr2; ..." Set-Cookie-style string.
-      // Returns a Cookie instance whose .name/.value are the FIRST pair,
-      // and attributes (Path, Domain, Max-Age, Expires, Secure, HttpOnly,
-      // SameSite, Partitioned) come from subsequent segments.
-      const parts = String(header || "").split(/;\s*/);
+      const s = String(header || "");
+      // Reject header injection: CR / LF / NUL / line separators.
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c === 0 || c === 10 || c === 13 || c === 0x2028 || c === 0x2029) {
+          throw new TypeError("Cookie.parse: invalid control character in header");
+        }
+      }
+      const parts = s.split(/;\s*/);
       if (parts.length === 0 || parts[0].length === 0) {
         throw new TypeError("Cookie.parse: invalid input");
       }
