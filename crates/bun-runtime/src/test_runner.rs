@@ -591,6 +591,11 @@ const GLOBALS: &str = r#"
     if (v === null) return "null";
     if (typeof v === "string") return JSON.stringify(v);
     if (typeof v === "function") return "[Function]";
+    if (v instanceof RegExp) return v.toString();
+    if (v instanceof Date) return v.toISOString();
+    if (v instanceof Error) return v.name + ": " + v.message;
+    if (typeof v === "bigint") return v.toString() + "n";
+    if (typeof v === "symbol") return v.toString();
     try { return JSON.stringify(v); } catch { return String(v); }
   }
   function mkExpect(received, not, label) {
