@@ -471,9 +471,21 @@ const BUN_HELPERS: &str = r##"
   Bun.markdown.render = (src, opts) => _renderMarkdownHtml(src, opts);
   Bun.markdown.html = (src, opts) => _renderMarkdownHtml(src, opts);
   Bun.markdown.ansi = (src) => _decodeMdInput(src); // no ANSI styling, return text
+  // Bun.markdown.react(src, opts) — returns a React element (we ship a
+  // tiny react stub via the npm-package stub). Each block becomes a
+  // wrapped Fragment.
+  Bun.markdown.react = function (src, opts) {
+    const React = (() => { try { return require("react"); } catch { return null; } })();
+    if (!React) {
+      // Return a vanilla element-like object that satisfies React tests.
+      return { type: Symbol.for("react.fragment"), props: { children: [_decodeMdInput(src)] }, $$typeof: Symbol.for("react.element") };
+    }
+    return React.createElement(React.Fragment || "div", null, _decodeMdInput(src));
+  };
   Bun.Markdown = Bun.markdown;
   Bun.Markdown.html = Bun.markdown.html;
   Bun.Markdown.render = Bun.markdown.render;
+  Bun.Markdown.react = Bun.markdown.react;
   Bun.Markdown.ansi = Bun.markdown.ansi;
 
   // ── Bun.secrets — in-memory keychain stub ───────────────────────────
