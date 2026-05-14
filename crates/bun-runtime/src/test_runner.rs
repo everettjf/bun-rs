@@ -828,7 +828,9 @@ const GLOBALS: &str = r#"
         // the message *before* the fmt'd values, so stderr grepping works.
         const hint = `expect(received)${not ? ".not" : ""}.${action}(expected)`;
         const base = `${hint} ${expected !== undefined ? "received: " + fmt(received) + " expected: " + fmt(expected) : "received: " + fmt(received)}`;
-        fail(label ? `${label}\n\n${hint}\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
+        // Label form: "<label>\n\nExpected: ... Received: ..." (no hint between
+        // label and Expected — Bun's format).
+        fail(label ? `${label}\n\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
       }
     };
     const obj = {
