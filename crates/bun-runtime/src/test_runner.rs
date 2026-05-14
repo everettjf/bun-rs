@@ -1015,8 +1015,6 @@ const GLOBALS: &str = r#"
           throw new Error("Snapshot matchers cannot be used outside of a test");
         }
         // Bun's signatures: toMatchSnapshot(name?), toMatchSnapshot(matcher, name?)
-        // matcher must be a plain object whose properties are values or
-        // asymmetric matchers; throws if received is not an object.
         const a = args[0];
         const b = args[1];
         if (a !== undefined && typeof a === "object" && a !== null && !Array.isArray(a)) {
@@ -1024,23 +1022,28 @@ const GLOBALS: &str = r#"
           if (received === null || typeof received !== "object") {
             throw new TypeError("Received value must be an object");
           }
-          for (const k of Object.keys(a)) {
-            const m = a[k];
-            const v = received[k];
-            if (m && typeof m === "object" && m.__bun_asymmetric_matcher) {
-              if (!m.test(v)) throw new Error(`Property matcher for "${k}" did not match`);
-            } else if (m === v) {
-              continue;
-            } else if (typeof m === "function") {
-              // Bare constructor form (jest sometimes accepts these as
-              // shorthand expect.any()).
-              if (!(v instanceof m)) throw new Error(`Property matcher for "${k}" did not match`);
-            } else {
-              if (!deepEq(m, v)) throw new Error(`Property "${k}" did not match`);
+          // Recursively check matcher tree. Each value either deepEq-matches
+          // or is an asymmetric matcher (expect.any/anything/etc.).
+          function matchTree(m, v, path) {
+            if (m && typeof m === "object" && m.__bun_match && typeof m.asymmetricMatch === "function") {
+              if (!m.asymmetricMatch(v)) {
+                throw new Error("Property matcher at " + path + " did not match");
+              }
+              return;
             }
+            if (m === null || typeof m !== "object" || Array.isArray(m)) {
+              if (!deepEq(m, v)) throw new Error("Property " + path + " did not match");
+              return;
+            }
+            if (v === null || typeof v !== "object") {
+              throw new Error("Property " + path + " did not match");
+            }
+            for (const k of Object.keys(m)) matchTree(m[k], v[k], path + "." + k);
+          }
+          for (const k of Object.keys(a)) {
+            matchTree(a[k], received[k], k);
           }
         } else if (a !== undefined && typeof a !== "string") {
-          // Bun: if first arg is not an object or string → throw.
           throw new TypeError("toMatchSnapshot: name must be a string");
         }
         if (b !== undefined && typeof b !== "string") {
@@ -1340,7 +1343,11 @@ const GLOBALS: &str = r#"
   };
 
   g.expect.any = function (ctor) {
-    return asymmetric("Any<" + (ctor && ctor.name || ctor) + ">", (a) => {
+    // Validate that ctor is a constructor function.
+    if (typeof ctor !== "function") {
+      throw new TypeError("any() expects a class constructor");
+    }
+    return asymmetric("Any<" + (ctor.name || String(ctor)) + ">", (a) => {
       if (ctor === Number) return typeof a === "number";
       if (ctor === String) return typeof a === "string";
       if (ctor === Boolean) return typeof a === "boolean";
@@ -1348,8 +1355,7 @@ const GLOBALS: &str = r#"
       if (ctor === Function) return typeof a === "function";
       if (ctor === Symbol) return typeof a === "symbol";
       if (ctor === Object) return a !== null && typeof a === "object";
-      if (typeof ctor === "function") return a instanceof ctor;
-      return false;
+      return a instanceof ctor;
     });
   };
   g.expect.anything = function () {
