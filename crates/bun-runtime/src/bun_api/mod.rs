@@ -231,13 +231,40 @@ pub fn install_bun(ctx: &Context) {
     });
 
     bind(ctx, &bun, "sleep", |args| {
-        // Blocking sleep — matches Bun.sleep semantics from JS (the caller
-        // typically awaits the returned Promise).
-        let ms = if args.len() >= 1 { args.get(0).to_number() } else { 0.0 };
-        if ms.is_finite() && ms > 0.0 {
-            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        // Bun.sleep(msOrDate) returns a Promise that resolves after the
+        // delay. Implement as setTimeout to keep the event loop alive
+        // (was blocking — many concurrent sleeps deadlock).
+        let ctx = args.context();
+        let mut ms = if args.len() >= 1 { args.get(0).to_number() } else { 0.0 };
+        // If arg is a Date, compute ms until that point.
+        if args.len() >= 1 {
+            let v = args.get(0);
+            if v.is_object() {
+                if let Ok(o) = v.to_object() {
+                    if let Ok(get_time) = o.get_property("getTime") {
+                        if let Ok(get_time_obj) = get_time.to_object() {
+                            if get_time_obj.is_function() {
+                                if let Ok(t) = get_time_obj.call(Some(o.clone()), &[]) {
+                                    let target = t.to_number();
+                                    let now = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|d| d.as_millis() as f64)
+                                        .unwrap_or(0.0);
+                                    ms = (target - now).max(0.0);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-        Ok(Value::new_undefined(args.context()))
+        if !ms.is_finite() || ms < 0.0 { ms = 0.0; }
+        let factory = ctx.eval(
+            "(ms) => new Promise(r => setTimeout(r, ms))",
+            Some("[Bun.sleep]"),
+        ).map_err(|e| e.to_string())?;
+        let factory = factory.to_object().map_err(|e| e.to_string())?;
+        factory.call(None, &[Value::new_number(ctx, ms)]).map_err(|e| e.to_string())
     });
 
     bind(ctx, &bun, "sleepSync", |args| {
