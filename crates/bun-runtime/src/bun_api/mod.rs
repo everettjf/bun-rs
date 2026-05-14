@@ -1631,8 +1631,13 @@ const BUN_HELPERS: &str = r##"
     constructor(algorithm, key) {
       this.algorithm = String(algorithm || "sha256");
       const c = require("node:crypto");
+      // Coerce ArrayBuffer / typed-arrays to Buffer for HMAC keys.
+      if (key !== undefined && key !== null) {
+        if (key instanceof ArrayBuffer) key = Buffer.from(new Uint8Array(key));
+        else if (ArrayBuffer.isView(key) && !(key instanceof Buffer)) key = Buffer.from(new Uint8Array(key.buffer, key.byteOffset, key.byteLength));
+      }
       try {
-        this._h = key ? c.createHmac(this.algorithm, key) : c.createHash(this.algorithm);
+        this._h = (key !== undefined && key !== null) ? c.createHmac(this.algorithm, key) : c.createHash(this.algorithm);
       } catch (e) {
         const ts = ["shake128", "shake256"];
         if (ts.includes(this.algorithm)) {
@@ -1644,7 +1649,12 @@ const BUN_HELPERS: &str = r##"
     }
     update(input, encoding) {
       if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to update");
+      if (input === undefined || input === null) throw new TypeError("CryptoHasher.update: input required");
       if (input instanceof Blob) input = new Uint8Array(input._bytes || []);
+      if (input && input.path !== undefined && input.text !== undefined && !ArrayBuffer.isView(input)) {
+        // Bun.file — not supported sync.
+        throw new TypeError("Bun.file in CryptoHasher is not supported yet");
+      }
       this._h.update(input, encoding);
       return this;
     }
