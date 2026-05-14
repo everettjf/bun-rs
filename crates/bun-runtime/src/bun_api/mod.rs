@@ -1309,6 +1309,25 @@ const BUN_HELPERS: &str = r##"
   Object.defineProperty(Bun, "argv", { get() { return process.argv; } });
   // Bun.main is writable; default is the running script.
   globalThis.__bun_main_override = undefined;
+  // ShadowRealm — simulate with a separate scope using new Function eval.
+  // Each ShadowRealm gets its own globalThis-like object that doesn't leak
+  // to the outer realm.
+  if (typeof globalThis.ShadowRealm === "undefined") {
+    globalThis.ShadowRealm = class ShadowRealm {
+      constructor() {
+        this._scope = Object.create(null);
+        this._scope.globalThis = this._scope;
+      }
+      evaluate(code) {
+        if (typeof code !== "string") throw new TypeError("ShadowRealm.evaluate: code must be a string");
+        // Strip trailing semicolons + whitespace, then evaluate as expression.
+        const trimmed = code.replace(/[;\s]+$/, "");
+        const fn = new Function("globalThis", "return (" + trimmed + ");");
+        return fn(this._scope);
+      }
+      importValue() { throw new Error("ShadowRealm.importValue not implemented"); }
+    };
+  }
   // Track Bun static reification: any ownKeys call on Bun flips a flag.
   (function () {
     const origGetOwnPropertyNames = Object.getOwnPropertyNames;
