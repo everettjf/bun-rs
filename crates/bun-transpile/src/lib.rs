@@ -33,7 +33,13 @@ pub struct Transpiled {
 /// Transpile a source file. The path's extension is used to pick the
 /// dialect (`.ts`/`.tsx`/`.jsx`/`.mjs`/...).
 pub fn transpile_file(path: &Path, source: &str) -> Result<Transpiled, TranspileError> {
-    let source_type = SourceType::from_path(path).unwrap_or(SourceType::default());
+    let mut source_type = SourceType::from_path(path).unwrap_or(SourceType::default());
+    // Bun lets .js and .ts also contain JSX. Enable JSX whenever the file
+    // body actually looks JSX-y so .js files with JSX (like Bun's
+    // inspect.test.js) parse.
+    if source.contains("</") || source.contains("/>") {
+        source_type = source_type.with_jsx(true);
+    }
     transpile(source_type, path.to_string_lossy().as_ref(), source)
 }
 
