@@ -1280,7 +1280,25 @@ const BUN_HELPERS: &str = r##"
       const o = opts || {};
       this.domain = o.domain || null;
       this.path = o.path || "/";
-      this.expires = o.expires || null;
+      // Validate expires: must be Date | Number(finite) | null/undefined.
+      if (o.expires !== undefined && o.expires !== null) {
+        if (o.expires instanceof Date) {
+          if (Number.isNaN(o.expires.getTime())) {
+            throw new TypeError("expires must be a valid Date (or Number)");
+          }
+          this.expires = o.expires;
+        } else if (typeof o.expires === "number") {
+          if (!Number.isFinite(o.expires)) {
+            throw new TypeError("expires must be a valid Number");
+          }
+          // Bun: Number expires is seconds-since-epoch → Date instance.
+          this.expires = new Date(o.expires * 1000);
+        } else {
+          throw new TypeError("expires must be a Date or Number");
+        }
+      } else {
+        this.expires = undefined;
+      }
       this.maxAge = o.maxAge !== undefined ? o.maxAge : null;
       this.secure = !!o.secure;
       this.httpOnly = !!o.httpOnly;
