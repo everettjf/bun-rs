@@ -665,6 +665,10 @@ fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
                    o.isFile = () => f; \
                    o.isDirectory = () => d; \
                    o.isSymbolicLink = () => sl; \
+                   o.isBlockDevice = () => false; \
+                   o.isCharacterDevice = () => false; \
+                   o.isFIFO = () => false; \
+                   o.isSocket = () => false; \
                    return o; \
                  }",
                 Some("[stat-methods]"),

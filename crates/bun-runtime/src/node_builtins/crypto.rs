@@ -175,6 +175,38 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Ok(arr)
     });
 
+    // crypto.getRandomValues — implemented in JS to use the typed-array
+    // index setters (so we can write through Uint8Array/Uint32Array/etc).
+    let _ = ctx.eval(
+        r#"
+        ((exports) => {
+            exports.getRandomValues = function (arr) {
+                if (!ArrayBuffer.isView(arr)) throw new TypeError("getRandomValues requires a TypedArray");
+                const bytes = exports.randomBytes(arr.byteLength);
+                const view = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+                for (let i = 0; i < bytes.byteLength; i++) view[i] = bytes[i];
+                return arr;
+            };
+        })
+        "#,
+        Some("[node:crypto.getRandomValues]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[exports_v])));
+    // webcrypto sub-namespace (Node exposes node:crypto.webcrypto with
+    // randomUUID / getRandomValues / subtle).
+    let _ = ctx.eval(
+        r#"
+        ((exports) => {
+            exports.webcrypto = {
+                randomUUID: exports.randomUUID,
+                getRandomValues: exports.getRandomValues,
+                subtle: globalThis.crypto && globalThis.crypto.subtle,
+            };
+            exports.constants = exports.constants || {};
+        })
+        "#,
+        Some("[node:crypto.webcrypto]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[exports_v])));
+
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
 }
