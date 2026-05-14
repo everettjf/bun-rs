@@ -91,7 +91,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
     for file in &files {
         eprintln!("\n● {}", file.display());
         // Reset the JS-side collector for each file.
-        let _ = rt.ctx.eval("globalThis.__bun_test_collector = []", Some("[test-reset]"));
+        let _ = rt.ctx.eval("globalThis.__bun_test_collector = []; globalThis.__bun_has_only = false;", Some("[test-reset]"));
 
         // Load the module via the loader (full TS / ESM pipeline).
         if let Err(e) = crate::modules::run_entry(&rt.ctx, file) {
@@ -120,7 +120,12 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
             .eval(
                 r#"
                 (async () => {
-                    const all = globalThis.__bun_test_collector || [];
+                    let all = globalThis.__bun_test_collector || [];
+                    // If any test is marked .only, filter to just those (and
+                    // mark all non-only tests as skip).
+                    if (globalThis.__bun_has_only) {
+                        all = all.map(t => t.only ? t : { ...t, skip: true });
+                    }
                     let pass = 0, fail = 0, skipped = 0;
                     const failed = [];
                     // Dedupe beforeAll hooks by reference: a parent describe's
@@ -357,6 +362,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
     eprintln!(" {} pass", total_pass);
     eprintln!(" {} fail", total_fail);
     eprintln!(" {} skip", total_skipped);
+    let test_word = if total_pass + total_fail == 1 { "test" } else { "tests" };
+    let file_word = if files.len() == 1 { "file" } else { "files" };
+    eprintln!("Ran {} {} across {} {}.", total_pass + total_fail, test_word, files.len(), file_word);
     if total_fail > 0 {
         eprintln!("\nfailed in:");
         for f in &failed_files {
@@ -524,6 +532,7 @@ const GLOBALS: &str = r#"
       timeout,
       failing: !!(opts && opts.failing),
       concurrent: !!(opts && opts.concurrent),
+      only: !!(opts && opts.only),
     });
   }
 
@@ -543,7 +552,10 @@ const GLOBALS: &str = r#"
   g.it.skip = g.test.skip;
   g.test.todo = (name, fn) => pushTest(name, fn || (() => {}), { skip: true });
   g.it.todo = g.test.todo;
-  g.test.only = (name, fn) => pushTest(name, fn);
+  g.test.only = (name, fn) => {
+    g.__bun_has_only = true;
+    return pushTest(name, fn, { only: true });
+  };
   g.it.only = g.test.only;
   // .failing: test is expected to fail; inverted exit code.
   g.test.failing = (name, fn) => {
