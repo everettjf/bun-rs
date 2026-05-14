@@ -1013,6 +1013,8 @@ const BUN_HELPERS: &str = r##"
       }
       i += len;
       if (cp < 0x20 || cp === 0x7f) continue;
+      // Soft hyphen / shy — width 0.
+      if (cp === 0x00ad) continue;
       // Combining marks (Mn) — width 0. Coarse range checks.
       if ((cp >= 0x0300 && cp <= 0x036f) || (cp >= 0x0483 && cp <= 0x0489)
         || (cp >= 0x07a6 && cp <= 0x07b0) || (cp >= 0x0900 && cp <= 0x0903)
@@ -1038,7 +1040,13 @@ const BUN_HELPERS: &str = r##"
         || (cp >= 0xff00 && cp <= 0xff60)
         || (cp >= 0xffe0 && cp <= 0xffe6)
         || (cp >= 0x20000 && cp <= 0x2fffd);
-      w += wide ? 2 : 1;
+      // Check for following U+FE0F (emoji presentation selector). If
+      // present, treat the base as width 2.
+      let charWidth = wide ? 2 : 1;
+      if (i < str.length && str.charCodeAt(i) === 0xfe0f) {
+        charWidth = 2;
+      }
+      w += charWidth;
     }
     return w;
   };
