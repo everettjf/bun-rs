@@ -79,6 +79,73 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
     let stdin = make_stdin(ctx);
     proc.set_property("stdin", &stdin).expect("set stdin");
 
+    // process.config — Node compatibility (some tests probe it).
+    let config_v = ctx
+        .eval(
+            r#"({
+                target_defaults: { cflags: [], default_configuration: "Release", defines: [], include_dirs: [], libraries: [] },
+                variables: {
+                    asan: 0, coverage: false, debug_nghttp2: false, enable_lto: false, enable_pgo_generate: false, enable_pgo_use: false,
+                    force_dynamic_crt: 0, host_arch: "x64", icu_data_in: "", icu_data_path: "", icu_default_data: "",
+                    icu_endianness: "l", icu_gyp_path: "tools/icu/icu-system.gyp", icu_path: "deps/icu-small", icu_small: false,
+                    icu_ver_major: "73", node_byteorder: "little", node_install_npm: true, node_install_corepack: true,
+                    node_module_version: 120, node_no_browser_globals: false, node_prefix: "/", node_release_urlbase: "",
+                    node_shared: false, node_shared_libuv: false, node_use_dtrace: false, node_use_etw: false, node_use_node_code_cache: true,
+                    node_use_node_snapshot: true, node_use_openssl: true, node_use_v8_platform: true, node_with_ltcg: false,
+                    node_without_node_options: false, openssl_quic: true, shlib_suffix: "120.dylib", target_arch: "x64",
+                    target_platform: "linux", v8_enable_31bit_smis_on_64bit_arch: 0, v8_enable_gdbjit: 0, v8_no_strict_aliasing: 1,
+                    v8_optimized_debug: 1, v8_promise_internal_field_count: 1, v8_random_seed: 0, v8_trace_maps: 0,
+                    v8_use_siphash: 1
+                }
+            })"#,
+            Some("[process.config]"),
+        )
+        .unwrap();
+    proc.set_property("config", &config_v).expect("set config");
+    // process.versions — common probes.
+    let versions_v = ctx
+        .eval(
+            r#"({
+                node: "20.0.0",
+                v8: "11.0.0",
+                bun: "1.0.0",
+                modules: "120",
+                uv: "1.46.0",
+                openssl: "3.0.0",
+                ares: "1.20.0",
+                http_parser: "2.9.4",
+                napi: "9",
+                nghttp2: "1.55.0",
+                zlib: "1.2.13",
+                brotli: "1.0.9",
+                icu: "73.2",
+                unicode: "15.0",
+                cldr: "43.0",
+                tz: "2023c",
+                tzdata: "2023c",
+                webkit: "618.1"
+            })"#,
+            Some("[process.versions]"),
+        )
+        .unwrap();
+    proc.set_property("versions", &versions_v).expect("set versions");
+    // process.release — Node-style.
+    let release_v = ctx
+        .eval(
+            r#"({ name: "node", lts: "Iron", sourceUrl: "", headersUrl: "", libUrl: "" })"#,
+            Some("[process.release]"),
+        )
+        .unwrap();
+    proc.set_property("release", &release_v).expect("set release");
+    // process.features — Node uses this for capability probing.
+    let features_v = ctx
+        .eval(
+            r#"({ inspector: false, debug: false, uv: true, ipv6: true, tls_alpn: true, tls_sni: true, tls_ocsp: true, tls: true, cached_builtins: true, typescript: true })"#,
+            Some("[process.features]"),
+        )
+        .unwrap();
+    proc.set_property("features", &features_v).expect("set features");
+
     // process.hrtime / hrtime.bigint — high-resolution time
     let hrtime_cb = Callback::new(ctx, "hrtime", |args| {
         let ctx = args.context();
@@ -310,18 +377,15 @@ pub fn install_process(ctx: &Context, argv: Vec<String>) {
     proc.set_property("nextTick", &next_tick_fn)
         .expect("set nextTick");
 
-    // versions.bun (string) — useful for compat checks.
-    let versions = ctx
-        .eval("({})", Some("[process.versions]"))
-        .expect("create versions obj");
-    let versions_obj = versions.to_object().expect("to_object");
-    versions_obj
-        .set_property(
-            "bun",
-            &Value::new_string(ctx, env!("CARGO_PKG_VERSION")),
-        )
-        .expect("set versions.bun");
-    proc.set_property("versions", &versions).expect("set versions");
+    // versions.bun — append to the existing versions object (set earlier).
+    if let Ok(versions) = proc.get_property("versions") {
+        if let Ok(versions_obj) = versions.to_object() {
+            let _ = versions_obj.set_property(
+                "bun",
+                &Value::new_string(ctx, env!("CARGO_PKG_VERSION")),
+            );
+        }
+    }
 
     // process.revision — Bun exposes the git revision of the binary.
     // We use a stable stub so tests can compare process.revision === Bun.revision.

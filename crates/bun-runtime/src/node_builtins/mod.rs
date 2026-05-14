@@ -86,6 +86,11 @@ pub fn load<'ctx>(ctx: &'ctx Context, name: &str) -> Option<Value<'ctx>> {
         "test" | "node:test" => build_node_test_stub,
         "diagnostics_channel" | "node:diagnostics_channel" => build_diag_channel_stub,
         "https" | "node:https" => http::build,
+        "cluster" | "node:cluster" => build_cluster_stub,
+        "domain" | "node:domain" => build_domain_stub,
+        "async_hooks" | "node:async_hooks" => build_async_hooks_stub,
+        "repl" | "node:repl" => build_repl_stub,
+        "sea" | "node:sea" => build_sea_stub,
         _ => return None,
     };
     let key = canonical_name(name);
@@ -532,6 +537,102 @@ fn build_trace_events_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Some("[node:trace_events]"),
     )
     .unwrap()
+}
+
+fn build_cluster_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            isPrimary: true,
+            isMaster: true,
+            isWorker: false,
+            worker: null,
+            workers: {},
+            schedulingPolicy: 2,
+            SCHED_NONE: 1,
+            SCHED_RR: 2,
+            fork: () => { throw new Error("cluster.fork not implemented"); },
+            disconnect: (cb) => { if (cb) cb(); },
+            setupPrimary: () => {},
+            setupMaster: () => {},
+            on: () => {}, off: () => {}, once: () => {}, emit: () => {}, removeListener: () => {},
+            addListener: function () { return this; }, removeAllListeners: function () { return this; },
+            setMaxListeners: function () { return this; }, getMaxListeners: () => 10,
+            listeners: () => [], rawListeners: () => [], eventNames: () => [],
+            settings: {},
+            Worker: class { constructor() {} kill() {} send() {} },
+        })"#,
+        Some("[node:cluster]"),
+    ).unwrap()
+}
+
+fn build_domain_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            create: () => ({ run: (fn) => fn(), on: () => {}, off: () => {}, add: () => {}, remove: () => {}, intercept: (fn) => fn, bind: (fn) => fn, dispose: () => {} }),
+            createDomain: () => ({ run: (fn) => fn(), on: () => {}, off: () => {}, add: () => {}, remove: () => {}, intercept: (fn) => fn, bind: (fn) => fn, dispose: () => {} }),
+            Domain: class { run(fn) { return fn(); } on() {} off() {} add() {} remove() {} intercept(fn) { return fn; } bind(fn) { return fn; } dispose() {} },
+        })"#,
+        Some("[node:domain]"),
+    ).unwrap()
+}
+
+fn build_async_hooks_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            AsyncLocalStorage: class AsyncLocalStorage {
+                constructor() { this._store = undefined; }
+                getStore() { return this._store; }
+                run(store, fn, ...args) { const prev = this._store; this._store = store; try { return fn(...args); } finally { this._store = prev; } }
+                enterWith(store) { this._store = store; }
+                exit(fn, ...args) { const prev = this._store; this._store = undefined; try { return fn(...args); } finally { this._store = prev; } }
+                disable() { this._store = undefined; }
+            },
+            AsyncResource: class AsyncResource {
+                constructor(_type) {}
+                runInAsyncScope(fn, thisArg, ...args) { return fn.apply(thisArg, args); }
+                emitDestroy() {}
+                asyncId() { return 0; }
+                triggerAsyncId() { return 0; }
+                bind(fn) { return fn; }
+                static bind(fn) { return fn; }
+            },
+            createHook: () => ({ enable: () => {}, disable: () => {} }),
+            executionAsyncId: () => 0,
+            executionAsyncResource: () => ({}),
+            triggerAsyncId: () => 0,
+        })"#,
+        Some("[node:async_hooks]"),
+    ).unwrap()
+}
+
+fn build_repl_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            start: () => { throw new Error("repl.start not implemented"); },
+            REPLServer: class { constructor() { throw new Error("REPLServer not implemented"); } },
+            REPL_MODE_SLOPPY: Symbol("repl-sloppy"),
+            REPL_MODE_STRICT: Symbol("repl-strict"),
+            Recoverable: class extends SyntaxError {},
+        })"#,
+        Some("[node:repl]"),
+    ).unwrap()
+}
+
+fn build_sea_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
+    ctx.eval(
+        r#"({
+            __esModule: true,
+            isSea: () => false,
+            getAsset: () => null,
+            getAssetAsBlob: () => null,
+            getRawAsset: () => null,
+        })"#,
+        Some("[node:sea]"),
+    ).unwrap()
 }
 
 fn build_inspector_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
