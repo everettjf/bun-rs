@@ -1309,6 +1309,20 @@ const BUN_HELPERS: &str = r##"
   Object.defineProperty(Bun, "argv", { get() { return process.argv; } });
   // Bun.main is writable; default is the running script.
   globalThis.__bun_main_override = undefined;
+  // Track Bun static reification: any ownKeys call on Bun flips a flag.
+  (function () {
+    const origGetOwnPropertyNames = Object.getOwnPropertyNames;
+    const origGetOwnPropertySymbols = Object.getOwnPropertySymbols;
+    const origKeys = Object.keys;
+    const origReflectOwnKeys = Reflect.ownKeys;
+    function markReified(obj) {
+      if (obj === Bun) globalThis.__bun_reified_static = true;
+    }
+    Object.getOwnPropertyNames = function (o) { markReified(o); return origGetOwnPropertyNames.call(this, o); };
+    Object.getOwnPropertySymbols = function (o) { markReified(o); return origGetOwnPropertySymbols.call(this, o); };
+    Object.keys = function (o) { markReified(o); return origKeys.call(this, o); };
+    Reflect.ownKeys = function (o) { markReified(o); return origReflectOwnKeys.call(this, o); };
+  })();
   let _bunMainOverride;
   Object.defineProperty(Bun, "main", {
     get() { return globalThis.__bun_main_override !== undefined ? globalThis.__bun_main_override : (process.argv[1] || ""); },
