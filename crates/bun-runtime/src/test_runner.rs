@@ -95,7 +95,20 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
         // Load the module via the loader (full TS / ESM pipeline).
         if let Err(e) = crate::modules::run_entry(&rt.ctx, file) {
-            eprintln!("  ✗ failed to load: {e}");
+            // Emit the message twice: once in our test-runner format and
+            // once as "error: <message>" so Bun-style stderr matchers find
+            // it (Bun prefixes uncaught exceptions with "error:").
+            let msg = format!("{e}");
+            // Strip "Error: " from inside the message to expose just the
+            // useful payload (e.g. "describe() expects...").
+            let payload = msg
+                .split("Error: ")
+                .last()
+                .unwrap_or(&msg)
+                .trim()
+                .to_string();
+            eprintln!("  ✗ failed to load: {msg}");
+            eprintln!("error: {payload}");
             total_fail += 1;
             failed_files.push(file.display().to_string());
             continue;
