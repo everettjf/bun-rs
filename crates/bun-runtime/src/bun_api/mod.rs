@@ -1808,17 +1808,33 @@ const BUN_HELPERS: &str = r##"
     let out = "";
     const str = String(s);
     let i = 0;
+    function consumeCsi(start) {
+      let j = start;
+      while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
+      while (j < str.length && str.charCodeAt(j) >= 0x20 && str.charCodeAt(j) <= 0x2f) j++;
+      if (j < str.length) j++;
+      return j;
+    }
     while (i < str.length) {
       const c = str.charCodeAt(i);
+      // U+009B: single-byte CSI (treat like ESC [).
+      if (c === 0x9b) { i = consumeCsi(i + 1); continue; }
+      // U+009D: single-byte OSC (treat like ESC ]).
+      if (c === 0x9d) {
+        let j = i + 1;
+        while (j < str.length) {
+          if (str.charCodeAt(j) === 0x07) { j++; break; }
+          if (str.charCodeAt(j) === 0x1b && j + 1 < str.length && str.charAt(j + 1) === "\\") { j += 2; break; }
+          j++;
+        }
+        i = j;
+        continue;
+      }
       if (c !== 0x1b) { out += str.charAt(i); i++; continue; }
       if (i + 1 >= str.length) { i++; continue; }
       const next = str.charAt(i + 1);
       if (next === "[") {
-        let j = i + 2;
-        while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
-        while (j < str.length && str.charCodeAt(j) >= 0x20 && str.charCodeAt(j) <= 0x2f) j++;
-        if (j < str.length) j++;
-        i = j;
+        i = consumeCsi(i + 2);
       } else if (next === "]") {
         let j = i + 2;
         while (j < str.length) {
@@ -1827,9 +1843,20 @@ const BUN_HELPERS: &str = r##"
           j++;
         }
         i = j;
-      } else if (next === "(" || next === ")" || next === "#" || next === "%") {
+      } else if (next === "(" || next === ")" || next === "#" || next === "%" || next === "*" || next === "+" || next === "-" || next === "." || next === "/") {
+        // Charset designation: ESC <set> <charset>
         i += 3;
+      } else if (next === "P" || next === "X" || next === "^" || next === "_") {
+        // DCS/SOS/PM/APC: consume to ST (ESC \) or BEL.
+        let j = i + 2;
+        while (j < str.length) {
+          if (str.charCodeAt(j) === 0x07) { j++; break; }
+          if (str.charCodeAt(j) === 0x1b && j + 1 < str.length && str.charAt(j + 1) === "\\") { j += 2; break; }
+          j++;
+        }
+        i = j;
       } else {
+        // Generic 2-char escape (ESC + alpha or digit).
         i += 2;
       }
     }

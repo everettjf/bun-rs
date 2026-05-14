@@ -226,9 +226,18 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     for (let i = t.afterEach.length - 1; i >= 0; i--) {
                                         try { await runHook(t.afterEach[i]); } catch {}
                                     }
+                                    const finallyHooksF = globalThis.__bun_current_finally || [];
+                                    for (const h of finallyHooksF) {
+                                        try { await runHook(h); } catch {}
+                                    }
                                     console.log("  ✓ " + fullName + " (failing, threw as expected)");
                                     pass++;
                                     return;
+                                }
+                                // Run finally hooks even on failure.
+                                const finallyHooksE = globalThis.__bun_current_finally || [];
+                                for (const h of finallyHooksE) {
+                                    try { await runHook(h); } catch {}
                                 }
                                 throw e;
                             }
@@ -393,7 +402,29 @@ const GLOBALS: &str = r#"
 
   g.describe = function (name, body) {
     // Single-arg form: describe(fn) — anonymous suite.
-    if (typeof name === "function" && body === undefined) { body = name; name = ""; }
+    if (typeof name === "function" && body === undefined) {
+      body = name;
+      // Use the function's .name if it has one; otherwise fall back to "() => {}"
+      // or "class {}". This matches Bun's behavior: described named classes
+      // appear as their class name in test output.
+      if (typeof body.name === "string" && body.name !== "") {
+        name = body.name;
+      } else {
+        const src = String(body);
+        name = src.startsWith("class") ? "class {}" : (src.includes("=>") ? "() => {}" : "");
+      }
+    }
+    // describe(fn, body) where fn is a named class/function — name is fn.name.
+    if (typeof name === "function" && typeof body === "function") {
+      const fn = name;
+      if (typeof fn.name === "string" && fn.name !== "") {
+        name = fn.name;
+      } else {
+        // 2-arg with anonymous fn — Bun throws.
+        throw new Error("describe() expects first argument to be a named class, named function, number, or string");
+      }
+    }
+    if (typeof name === "number") name = String(name);
     if (typeof body !== "function") return; // describe(name) with no body — no-op
     stack.push({
       path: [...curr().path, name],
@@ -933,6 +964,28 @@ const GLOBALS: &str = r#"
         if (extra.length > 0) throw new TypeError("toHaveBeenCalled takes no arguments");
         if (!received || !received.mock) throw new TypeError("toHaveBeenCalled: received must be a mock");
         check(received.mock.calls && received.mock.calls.length > 0, undefined, "toHaveBeenCalled");
+      },
+      toBeCalled() {
+        if (!received || !received.mock) throw new TypeError("toBeCalled: received must be a mock");
+        check(received.mock.calls && received.mock.calls.length > 0, undefined, "toBeCalled");
+      },
+      toBeCalledTimes(n) {
+        if (typeof n !== "number") throw new TypeError("toBeCalledTimes requires a number argument");
+        if (!received || !received.mock) throw new TypeError("toBeCalledTimes: received must be a mock");
+        check(received.mock.calls && received.mock.calls.length === n, n, "toBeCalledTimes");
+      },
+      toBeCalledWith(...args) {
+        if (!received || !received.mock) throw new TypeError("toBeCalledWith: received must be a mock");
+        const calls = received.mock.calls || [];
+        const ok = calls.some(c => c.length === args.length && c.every((v, i) => deepEq(v, args[i])));
+        check(ok, args, "toBeCalledWith");
+      },
+      lastCalledWith(...args) {
+        if (!received || !received.mock) throw new TypeError("lastCalledWith: received must be a mock");
+        const calls = received.mock.calls || [];
+        const last = calls[calls.length - 1] || [];
+        const ok = last.length === args.length && last.every((v, i) => deepEq(v, args[i]));
+        check(ok, args, "lastCalledWith");
       },
       toHaveBeenCalledTimes(n) {
         if (typeof n !== "number") throw new TypeError("toHaveBeenCalledTimes requires a number argument");

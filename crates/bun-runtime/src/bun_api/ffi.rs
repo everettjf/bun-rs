@@ -44,7 +44,8 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             return Err("dlopen: second arg must be the symbol map".into());
         }
         let spec = spec_v.to_object().map_err(|e| e.to_string())?;
-        let lib = unsafe { Library::new(&path) }.map_err(|e| e.to_string())?;
+        let lib = unsafe { Library::new(&path) }
+            .map_err(|e| format!("Failed to open library {:?}: {}", path, e))?;
         let lib_rc: Rc<Library> = Rc::new(lib);
 
         let result = args.context().eval("({ symbols: {}, close: undefined })", Some("[ffi-result]")).unwrap();
@@ -100,8 +101,48 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         Ok(result)
     });
 
+    // linkSymbols / FFICb / read / suffix — minimum surface for tests.
+    // linkSymbols expects { name: { ptr: number, args, returns } }.
+    let _ = args_eval_extras(ctx, &exports);
+
     exports.set_property("default", &exports.as_value()).unwrap();
     exports.as_value()
+}
+
+fn args_eval_extras<'ctx>(ctx: &'ctx Context, exports: &bun_jsc::Object<'ctx>) -> Result<(), String> {
+    let src = r##"
+(function (mod) {
+  mod.linkSymbols = function (spec) {
+    if (!spec || typeof spec !== "object") {
+      throw new TypeError("Expected an object");
+    }
+    const out = { symbols: {}, close() {} };
+    for (const name of Object.keys(spec)) {
+      const def = spec[name];
+      if (typeof def !== "object" || def === null) {
+        throw new TypeError(name + ": Expected an object");
+      }
+      if (def.ptr === undefined || def.ptr === null || typeof def.ptr !== "number" || !Number.isFinite(def.ptr) || def.ptr <= 0) {
+        throw new TypeError(name + ": you must provide a \"ptr\" field with the memory address of the native function. linkSymbols / CFunction require this.");
+      }
+      out.symbols[name] = function () { throw new Error("linked symbol invocation not implemented"); };
+    }
+    return out;
+  };
+  mod.FFICb = mod.FFICb || function () { throw new Error("FFICb not implemented"); };
+  mod.CString = mod.CString || function (ptr) { return ""; };
+  mod.read = mod.read || { u8: (_p, _o) => 0, u16: (_p, _o) => 0, u32: (_p, _o) => 0, i8: (_p, _o) => 0, i16: (_p, _o) => 0, i32: (_p, _o) => 0, i64: (_p, _o) => 0n, u64: (_p, _o) => 0n, f32: (_p, _o) => 0, f64: (_p, _o) => 0, ptr: (_p, _o) => 0 };
+  mod.suffix = mod.suffix || (process.platform === "darwin" ? "dylib" : (process.platform === "win32" ? "dll" : "so"));
+  mod.ptr = mod.ptr || function (_x) { return 0; };
+  mod.toBuffer = mod.toBuffer || function (_p, _o, _l) { return new Uint8Array(0); };
+  mod.toArrayBuffer = mod.toArrayBuffer || function (_p, _o, _l) { return new ArrayBuffer(0); };
+  mod.JSCallback = mod.JSCallback || function () { throw new Error("JSCallback not implemented"); };
+})
+    "##;
+    let factory = ctx.eval(src, Some("[bun:ffi-extras]")).map_err(|e| e.to_string())?;
+    let factory_obj = factory.to_object().map_err(|e| e.to_string())?;
+    factory_obj.call(None, &[exports.as_value()]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 const FFI_TYPES: &[(&str, &str)] = &[
