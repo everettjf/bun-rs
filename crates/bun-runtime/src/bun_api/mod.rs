@@ -411,11 +411,19 @@ const BUN_HELPERS: &str = r##"
   Bun.YAML = Bun.YAML || globalThis.YAML;
 
   // Bun.JSONL — newline-delimited JSON. parse(str) returns array of values.
+  // Partial-results semantics: on the first parse error, return everything
+  // valid up to (but not including) the failing line. NeedMoreData (incomplete
+  // last line with no trailing \n) is NOT an error — those values are skipped.
   Bun.JSONL = {
+    [Symbol.toStringTag]: "JSONL",
     parse(text) {
+      if (text === null) throw new TypeError("Bun.JSONL.parse: input must be a string");
+      if (text === undefined) throw new TypeError("Bun.JSONL.parse: input must be a string");
       const out = [];
       const s = String(text);
       if (s.length === 0) return out;
+      // Split into lines first (respecting string quoting on \n).
+      const lines = [];
       let line = "";
       let inStr = false, esc = false;
       for (let i = 0; i < s.length; i++) {
@@ -424,14 +432,84 @@ const BUN_HELPERS: &str = r##"
         if (c === "\\" && inStr) { line += c; esc = true; continue; }
         if (c === '"') { inStr = !inStr; line += c; continue; }
         if (c === "\n" && !inStr) {
-          if (line.trim().length > 0) out.push(JSON.parse(line));
+          lines.push(line);
           line = "";
         } else {
           line += c;
         }
       }
-      if (line.trim().length > 0) out.push(JSON.parse(line));
+      const lastIsPartial = line.length > 0;
+      if (lastIsPartial) lines.push(line);
+      for (let idx = 0; idx < lines.length; idx++) {
+        const t = lines[idx].trim();
+        if (t.length === 0) continue;
+        const isLast = idx === lines.length - 1;
+        try {
+          out.push(JSON.parse(t));
+        } catch (e) {
+          // Last line incomplete (no trailing \n) → NeedMoreData; skip.
+          if (lastIsPartial && isLast) break;
+          // No prior valid values → propagate the parse error.
+          if (out.length === 0) throw new SyntaxError(e && e.message ? e.message : String(e));
+          // Otherwise stop here with partial results.
+          break;
+        }
+      }
       return out;
+    },
+    parseChunk(input) {
+      // parseChunk returns { values, read, done, error }. Accepts string or typed array.
+      let s;
+      if (typeof input === "string") s = input;
+      else if (input instanceof Uint8Array) s = new TextDecoder("utf-8").decode(input);
+      else if (input instanceof ArrayBuffer) s = new TextDecoder("utf-8").decode(new Uint8Array(input));
+      else if (ArrayBuffer.isView(input)) s = new TextDecoder("utf-8").decode(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
+      else throw new TypeError("Bun.JSONL.parseChunk: input must be a string or typed array");
+      const values = [];
+      let read = 0; // number of consumed chars excluding the final \n if any
+      let lastConsumedEnd = 0;
+      let line = "";
+      let lineStart = 0;
+      let inStr = false, esc = false;
+      let i = 0;
+      for (; i < s.length; i++) {
+        const c = s[i];
+        if (esc) { line += c; esc = false; continue; }
+        if (c === "\\" && inStr) { line += c; esc = true; continue; }
+        if (c === '"') { inStr = !inStr; line += c; continue; }
+        if (c === "\n" && !inStr) {
+          const t = line.trim();
+          if (t.length > 0) {
+            try {
+              values.push(JSON.parse(t));
+              read = i; // up to (but not including) the \n
+            } catch (e) {
+              if (values.length === 0) {
+                return { values, read: lastConsumedEnd, done: false, error: new SyntaxError(e.message || String(e)) };
+              }
+              return { values, read, done: false, error: new SyntaxError(e.message || String(e)) };
+            }
+          }
+          lastConsumedEnd = i + 1;
+          line = "";
+          lineStart = i + 1;
+        } else {
+          line += c;
+        }
+      }
+      // Trailing line without \n.
+      const t = line.trim();
+      if (t.length === 0) {
+        return { values, read: values.length > 0 ? read : 0, done: true, error: null };
+      }
+      // Try parsing the trailing partial.
+      try {
+        values.push(JSON.parse(t));
+        return { values, read: s.length, done: true, error: null };
+      } catch (e) {
+        // Incomplete (NeedMoreData) — not an error.
+        return { values, read: values.length > 0 ? read : 0, done: false, error: null };
+      }
     },
     stringify(values, replacer, space) {
       if (!Array.isArray(values)) {
