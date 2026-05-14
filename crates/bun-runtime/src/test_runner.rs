@@ -682,17 +682,16 @@ const GLOBALS: &str = r#"
       },
       toThrow(matcher) {
         let caught;
-        try { received(); } catch (e) { caught = e; }
-        const matched = !!caught && (
+        let didThrow = false;
+        try { received(); } catch (e) { caught = e; didThrow = true; }
+        const matched = didThrow && (
           matcher === undefined
-          // Asymmetric matchers (expect.objectContaining etc.)
           || (matcher && matcher.__bun_match && typeof matcher.asymmetricMatch === "function" && matcher.asymmetricMatch(caught))
-          || (matcher instanceof RegExp ? matcher.test(caught.message || String(caught))
-            : typeof matcher === "string" ? (caught.message || String(caught)).includes(matcher)
+          || (matcher instanceof RegExp ? matcher.test((caught && caught.message) || String(caught))
+            : typeof matcher === "string" ? ((caught && caught.message) || String(caught)).includes(matcher)
             : typeof matcher === "function" ? caught instanceof matcher
-            // Plain object: shape-match against caught.
             : (matcher && typeof matcher === "object") ? (
-                Object.keys(matcher).every(k => deepEq(caught[k], matcher[k]))
+                caught && Object.keys(matcher).every(k => deepEq(caught[k], matcher[k]))
               )
             : false)
         );
