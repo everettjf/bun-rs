@@ -62,6 +62,16 @@ impl Resolver {
         let from_dir = importer_file
             .parent()
             .unwrap_or_else(|| Path::new("."));
+        // Fast path for relative JSON/JSONC imports — oxc_resolver tries
+        // to parse them as package manifests which fails on empty files.
+        if (spec.starts_with("./") || spec.starts_with("../"))
+            && (spec.ends_with(".json") || spec.ends_with(".jsonc") || spec.ends_with(".json5"))
+        {
+            let p = from_dir.join(spec);
+            if p.exists() {
+                return Ok(p);
+            }
+        }
         match self.inner.resolve(from_dir, spec) {
             Ok(r) => Ok(r.path().to_path_buf()),
             Err(e) => {

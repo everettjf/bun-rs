@@ -109,7 +109,18 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
     match ext.as_str() {
         "json" => {
             // Strict JSON — fast path: embed source as JS string literal
-            // and run JSON.parse at module-init time.
+            // and run JSON.parse at module-init time. Empty file → {} so
+            // an empty package.json / tsconfig.json import returns {}.
+            let trimmed = source.trim();
+            if trimmed.is_empty() {
+                return Ok(PreparedModule {
+                    path: path.to_path_buf(),
+                    static_imports: vec![],
+                    rewritten: "module.exports = {};\n".to_string(),
+                    line_map: vec![0],
+                    original_source: source,
+                });
+            }
             let escaped = source
                 .replace('\\', "\\\\")
                 .replace('`', "\\`")
@@ -131,6 +142,16 @@ pub fn prepare(path: &Path) -> Result<PreparedModule, LoaderError> {
             // + unquoted keys + single quotes. Parse with the json5 crate
             // (which is JSON5-strict superset of JSONC) then emit as JSON
             // literal so the runtime side is identical to .json.
+            let trimmed = source.trim();
+            if trimmed.is_empty() {
+                return Ok(PreparedModule {
+                    path: path.to_path_buf(),
+                    static_imports: vec![],
+                    rewritten: "module.exports = {};\n".to_string(),
+                    line_map: vec![0],
+                    original_source: source,
+                });
+            }
             let value: serde_json::Value = json5::from_str(&source)
                 .map_err(|e| LoaderError::ParseModule(path.to_path_buf(), e.to_string()))?;
             let canonical = serde_json::to_string(&value)

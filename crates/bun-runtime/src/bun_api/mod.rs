@@ -1048,12 +1048,28 @@ const BUN_HELPERS: &str = r##"
   };
 
   // ── Bun.which / Bun.argv / Bun.main ─────────────────────────────────
-  Bun.which = function (name) {
-    const PATH = (process.env.PATH || "").split(":");
-    for (const dir of PATH) {
+  Bun.which = function (name, opts) {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    if (typeof name !== "string" || !name) return null;
+    // PATH_MAX-style guard: matches Bun's check on the candidate length.
+    if (name.length > 4096) throw new Error("bin path is too long");
+    // Bun does NOT look in cwd unless the name has a "/" (or "\" on Windows).
+    if (name.includes("/") || name.includes("\\")) {
+      // Treat as a path: relative to cwd (or opts.cwd) or absolute.
+      const cwd = (opts && opts.cwd) || process.cwd();
+      const candidate = path.isAbsolute(name) ? name : path.join(cwd, name);
+      try {
+        if (fs.existsSync(candidate)) return candidate;
+      } catch {}
+      return null;
+    }
+    const PATH_str = (opts && opts.PATH) || process.env.PATH || "";
+    const sep = process.platform === "win32" ? ";" : ":";
+    for (const dir of PATH_str.split(sep)) {
+      if (!dir) continue;
       try {
         const p = dir + "/" + name;
-        const fs = require("node:fs");
         if (fs.existsSync(p)) return p;
       } catch {}
     }
@@ -1492,9 +1508,12 @@ const BUN_HELPERS: &str = r##"
   }
   class CookieMap {
     constructor(init) {
-      this._m = new Map();
+      // Bun's CookieMap stores entries in two buckets:
+      //   _pre: constructor-initialized (Map; iterator is stable)
+      //   _post: added via .set() (array; iterator is FormData-like, deletion shifts)
+      this._pre = new Map();
+      this._post = [];
       if (typeof init === "string") {
-        // "Cookie: a=1; b=2" — split by "; ", set each as { name, value }.
         const s = init.replace(/^Cookie:\s*/i, "");
         for (const part of s.split(";")) {
           const trim = part.trim();
@@ -1502,35 +1521,136 @@ const BUN_HELPERS: &str = r##"
           const eq = trim.indexOf("=");
           const k = eq < 0 ? trim : trim.slice(0, eq).trim();
           const v = eq < 0 ? "" : trim.slice(eq + 1).trim();
-          this._m.set(k, new Cookie(k, v));
+          this._pre.set(k, new Cookie(k, v));
         }
       } else if (Array.isArray(init)) {
         for (const pair of init) {
           if (Array.isArray(pair) && pair.length >= 2) {
             const [k, v] = pair;
-            this._m.set(k, v instanceof Cookie ? v : new Cookie(String(k), String(v)));
+            this._pre.set(k, v instanceof Cookie ? v : new Cookie(String(k), String(v)));
           }
         }
       } else if (init && typeof init === "object") {
         for (const [k, v] of Object.entries(init)) {
-          this._m.set(k, v instanceof Cookie ? v : new Cookie(k, typeof v === "object" && v !== null ? (v.value !== undefined ? v.value : "") : v, typeof v === "object" && v !== null ? v : undefined));
+          this._pre.set(k, v instanceof Cookie ? v : new Cookie(k, typeof v === "object" && v !== null ? (v.value !== undefined ? v.value : "") : v, typeof v === "object" && v !== null ? v : undefined));
         }
       }
     }
-    get size() { return this._m.size; }
-    get(name) { const c = this._m.get(name); return c ? (c instanceof Cookie ? c.value : c) : null; }
-    has(name) { return this._m.has(name); }
-    set(name, valueOrOpts) {
-      if (valueOrOpts instanceof Cookie) this._m.set(name, valueOrOpts);
-      else if (typeof valueOrOpts === "object" && valueOrOpts !== null) this._m.set(name, new Cookie(name, valueOrOpts.value, valueOrOpts));
-      else this._m.set(name, new Cookie(name, valueOrOpts));
+    get size() {
+      // Unique key count across both buckets (post entries with same name
+      // count as one too).
+      const seen = new Set(this._pre.keys());
+      for (const e of this._post) seen.add(e[0]);
+      return seen.size;
     }
-    delete(name) { this._m.delete(name); }
-    toJSON() { const o = {}; for (const [k, c] of this._m) o[k] = c instanceof Cookie ? c.value : c; return o; }
-    toSetCookieHeaders() { return Array.from(this._m.values()).map(c => c instanceof Cookie ? c.toString() : c); }
-    *entries() { for (const [k, c] of this._m) yield [k, c instanceof Cookie ? c.value : c]; }
-    *keys() { yield* this._m.keys(); }
-    *values() { for (const c of this._m.values()) yield (c instanceof Cookie ? c.value : c); }
+    __find(name) {
+      // _post entries take priority over _pre (later .set() wins).
+      for (let i = this._post.length - 1; i >= 0; i--) {
+        if (this._post[i][0] === name) return this._post[i][1];
+      }
+      return this._pre.get(name);
+    }
+    get(name) {
+      const c = this.__find(name);
+      if (!c) return null;
+      return c instanceof Cookie ? c.value : c;
+    }
+    has(name) {
+      if (this._pre.has(name)) return true;
+      return this._post.some(e => e[0] === name);
+    }
+    set(name, valueOrOpts) {
+      if (name instanceof Cookie && valueOrOpts === undefined) {
+        this._post.push([name.name, name]);
+        return;
+      }
+      let cookie;
+      if (valueOrOpts instanceof Cookie) cookie = valueOrOpts;
+      else if (typeof valueOrOpts === "object" && valueOrOpts !== null) cookie = new Cookie(name, valueOrOpts.value, valueOrOpts);
+      else cookie = new Cookie(name, valueOrOpts);
+      this._post.push([name, cookie]);
+    }
+    delete(name) {
+      if (arguments.length === 0 || name == null || (typeof name === "string" && name.length === 0)) {
+        throw new TypeError("Cookie name is required");
+      }
+      if (typeof name === "object") {
+        if (name instanceof Cookie) name = name.name;
+        else throw new TypeError("Cookie name is required");
+      }
+      this._pre.delete(name);
+      // Remove ALL post entries with that name (FormData allows duplicates).
+      for (let i = this._post.length - 1; i >= 0; i--) {
+        if (this._post[i][0] === name) this._post.splice(i, 1);
+      }
+    }
+    toJSON() {
+      const o = {};
+      for (const [k, c] of this._pre) o[k] = c instanceof Cookie ? c.value : c;
+      for (const [k, c] of this._post) o[k] = c instanceof Cookie ? c.value : c;
+      return o;
+    }
+    toSetCookieHeaders() {
+      const out = [];
+      const seen = new Set();
+      // post takes priority (later .set() wins)
+      for (let i = this._post.length - 1; i >= 0; i--) {
+        const [k, c] = this._post[i];
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.unshift(c instanceof Cookie ? c.toString() : c);
+      }
+      for (const [k, c] of this._pre) {
+        if (seen.has(k)) continue;
+        out.push(c instanceof Cookie ? c.toString() : c);
+      }
+      return out;
+    }
+    // Iterator: walks _post first (array index — deletions shift, FormData-like),
+    // then _pre (Map iterator — stable across deletions).
+    keys() {
+      const self = this;
+      let i = 0;
+      let preIt = null;
+      return {
+        [Symbol.iterator]() { return this; },
+        next() {
+          if (i < self._post.length) {
+            const k = self._post[i][0];
+            i++;
+            return { value: k, done: false };
+          }
+          if (!preIt) preIt = self._pre.keys();
+          return preIt.next();
+        }
+      };
+    }
+    entries() {
+      const self = this;
+      const keysIter = self.keys();
+      return {
+        [Symbol.iterator]() { return this; },
+        next() {
+          const n = keysIter.next();
+          if (n.done) return n;
+          const c = self.__find(n.value);
+          return { value: [n.value, c instanceof Cookie ? c.value : c], done: false };
+        }
+      };
+    }
+    values() {
+      const self = this;
+      const keysIter = self.keys();
+      return {
+        [Symbol.iterator]() { return this; },
+        next() {
+          const n = keysIter.next();
+          if (n.done) return n;
+          const c = self.__find(n.value);
+          return { value: c instanceof Cookie ? c.value : c, done: false };
+        }
+      };
+    }
     forEach(cb) { for (const e of this.entries()) cb(e[1], e[0], this); }
     [Symbol.iterator]() { return this.entries(); }
   }
