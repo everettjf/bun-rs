@@ -95,6 +95,42 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         )
         .unwrap();
     exports.set_property("constants", &constants_v).unwrap();
+    // Add ReadStream / WriteStream / Stats / Dirent / FSWatcher stubs so
+    // fuzzy tests and code that just references these classes doesn't crash.
+    let _ = ctx.eval(
+        r#"((fs) => {
+            class ReadStream { constructor(_p, _o) { throw new Error("fs.ReadStream not implemented; use fs.createReadStream"); } }
+            class WriteStream { constructor(_p, _o) { throw new Error("fs.WriteStream not implemented; use fs.createWriteStream"); } }
+            class Stats { constructor() {} }
+            class Dirent {
+                constructor(name) { this.name = name || ""; }
+                isFile() { return false; }
+                isDirectory() { return false; }
+                isSymbolicLink() { return false; }
+                isBlockDevice() { return false; }
+                isCharacterDevice() { return false; }
+                isFIFO() { return false; }
+                isSocket() { return false; }
+            }
+            class FSWatcher {
+                constructor() { throw new Error("fs.FSWatcher not implemented"); }
+                close() {}
+                on() { return this; }
+                ref() { return this; }
+                unref() { return this; }
+            }
+            class StatFs {}
+            class BigIntStats {}
+            fs.ReadStream = ReadStream;
+            fs.WriteStream = WriteStream;
+            fs.Stats = Stats;
+            fs.Dirent = Dirent;
+            fs.FSWatcher = FSWatcher;
+            fs.StatFs = StatFs;
+            fs.BigIntStats = BigIntStats;
+        })"#,
+        Some("[fs.classes]"),
+    ).and_then(|f| f.to_object().and_then(|o| o.call(None, &[exports_v])));
     // Also expose the fd-IO + symlink/link/chown/... async wrappers on
     // fs.promises (they were added to `exports` via auto-wrap but not the
     // promises namespace).
