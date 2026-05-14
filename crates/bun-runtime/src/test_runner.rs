@@ -947,8 +947,52 @@ const GLOBALS: &str = r#"
       // Snapshots: bun-rs has no snapshot store yet, so .toMatchSnapshot /
       // .toMatchInlineSnapshot always pass (mirroring Bun's "write the
       // snapshot on first run" semantics, just without persistence).
-      toMatchSnapshot(_name) { /* always pass */ },
-      toMatchInlineSnapshot(_snap) { /* always pass */ },
+      toMatchSnapshot(...args) {
+        // Bun's signatures: toMatchSnapshot(name?), toMatchSnapshot(matcher, name?)
+        // matcher must be a plain object whose properties are values or
+        // asymmetric matchers; throws if received is not an object.
+        const a = args[0];
+        const b = args[1];
+        if (a !== undefined && typeof a === "object" && a !== null && !Array.isArray(a)) {
+          // Property-matcher form.
+          if (received === null || typeof received !== "object") {
+            throw new TypeError("Received value must be an object");
+          }
+          for (const k of Object.keys(a)) {
+            const m = a[k];
+            const v = received[k];
+            if (m && typeof m === "object" && m.__bun_asymmetric_matcher) {
+              if (!m.test(v)) throw new Error(`Property matcher for "${k}" did not match`);
+            } else if (m === v) {
+              continue;
+            } else if (typeof m === "function") {
+              // Bare constructor form (jest sometimes accepts these as
+              // shorthand expect.any()).
+              if (!(v instanceof m)) throw new Error(`Property matcher for "${k}" did not match`);
+            } else {
+              if (!deepEq(m, v)) throw new Error(`Property "${k}" did not match`);
+            }
+          }
+        } else if (a !== undefined && typeof a !== "string") {
+          // Bun: if first arg is not an object or string → throw.
+          throw new TypeError("toMatchSnapshot: name must be a string");
+        }
+        if (b !== undefined && typeof b !== "string") {
+          throw new TypeError("toMatchSnapshot: snapshot name must be a string");
+        }
+        /* otherwise always pass */
+      },
+      toMatchInlineSnapshot(...args) {
+        // toMatchInlineSnapshot(snap?) or (matcher, snap?). Same validation
+        // as toMatchSnapshot but second arg may be a string.
+        const a = args[0];
+        if (a !== undefined && typeof a === "object" && a !== null && !Array.isArray(a)) {
+          if (received === null || typeof received !== "object") {
+            throw new TypeError("Received value must be an object");
+          }
+        }
+        /* always pass */
+      },
       toThrowErrorMatchingSnapshot(_name) {
         let caught = null;
         try { received(); } catch (e) { caught = e; }
