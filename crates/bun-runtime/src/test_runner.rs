@@ -297,7 +297,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             pass++;
                         } catch (e) {
                             const msg = e && e.message ? e.message : String(e);
-                            console.error("  ✗ " + fullName + " — " + msg);
+                            console.error("  ✗ (fail) " + fullName + " — " + msg);
                             if (e && e.stack) console.error("    " + String(e.stack).split("\n").join("\n    "));
                             fail++;
                             failed.push(fullName);
