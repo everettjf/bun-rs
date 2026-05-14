@@ -163,6 +163,33 @@ fn load_module<'ctx>(
     spec: &str,
     importer: &Path,
 ) -> Result<Value<'ctx>, LoaderRuntimeError> {
+    // mock.module(spec, factory) registration takes precedence over real
+    // resolution. Look up globalThis.__bun_mocked_modules.get(spec); if a
+    // factory is registered, call it and return the result (await it if
+    // it's a Promise).
+    let lookup = ctx
+        .eval(
+            r#"(function(spec){
+                const m = globalThis.__bun_mocked_modules;
+                if (!m) return null;
+                const f = m.get(spec);
+                if (typeof f !== "function") return null;
+                try { return Promise.resolve(f()); } catch (e) { return Promise.reject(e); }
+            })"#,
+            Some("[mock-module-lookup]"),
+        )
+        .ok()
+        .and_then(|v| v.to_object().ok());
+    if let Some(lookup_fn) = lookup {
+        if let Ok(spec_val) = ctx.eval(&format!("({:?})", spec), Some("[mock-spec]")) {
+            if let Ok(maybe_promise) = lookup_fn.call(None, &[spec_val]) {
+                if !maybe_promise.is_null() && !maybe_promise.is_undefined() {
+                    return Ok(maybe_promise);
+                }
+            }
+        }
+    }
+
     // Routing: `node:foo` and bare `foo` (when foo is a Node builtin) go
     // through `node_builtins::load`. Returning here means the JS-side
     // `await __bun_require("node:foo", ...)` resolves with the builtin's

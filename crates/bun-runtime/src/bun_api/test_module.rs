@@ -83,7 +83,14 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 return fn;
             }
             function mock(impl) { return mkMock(impl); }
-            mock.module = (_spec, _factory) => {};
+            // mock.module(spec, factory) — register a factory the loader
+            // checks before resolving normally. The next require/import of
+            // `spec` will return the factory's result instead of the real
+            // module. Async factories (returning a Promise) work too.
+            mock.module = (spec, factory) => {
+                globalThis.__bun_mocked_modules = globalThis.__bun_mocked_modules || new Map();
+                globalThis.__bun_mocked_modules.set(String(spec), factory);
+            };
             mock.restore = () => {};
             mock.clearAllMocks = () => {};
             mock.resetAllMocks = () => {};
