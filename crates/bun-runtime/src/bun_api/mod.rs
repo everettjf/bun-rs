@@ -3518,6 +3518,97 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 apply: (_t, _p) => "",
                 makeDiff: (_a, _b) => "",
             },
+            internalSourceMap: {
+                // fromVLQ(mappings): decode a "mappings" string to an array
+                // of [genLine, genCol, srcIdx, origLine, origCol] tuples.
+                fromVLQ(mappings) {
+                    const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                    const DEC = {};
+                    for (let i = 0; i < B64.length; i++) DEC[B64[i]] = i;
+                    const out = [];
+                    let i = 0, genLine = 0, genCol = 0, srcIdx = 0, origLine = 0, origCol = 0;
+                    while (i < mappings.length) {
+                        const c = mappings[i];
+                        if (c === ";") { genLine++; genCol = 0; i++; continue; }
+                        if (c === ",") { i++; continue; }
+                        const seg = [];
+                        let v = 0, shift = 0;
+                        while (i < mappings.length) {
+                            const ch = mappings[i];
+                            if (ch === ";" || ch === ",") break;
+                            const d = DEC[ch];
+                            i++;
+                            if (d === undefined) continue;
+                            v |= (d & 31) << shift;
+                            if ((d & 32) === 0) {
+                                const decoded = (v & 1) ? -(v >>> 1) : v >>> 1;
+                                seg.push(decoded);
+                                v = 0; shift = 0;
+                                continue;
+                            }
+                            shift += 5;
+                        }
+                        if (seg.length >= 1) genCol += seg[0];
+                        if (seg.length >= 4) {
+                            srcIdx += seg[1];
+                            origLine += seg[2];
+                            origCol += seg[3];
+                            out.push([genLine, genCol, srcIdx, origLine, origCol]);
+                        } else if (seg.length === 1) {
+                            // 1-field segment — skipped by the reference codec.
+                        }
+                    }
+                    return out;
+                },
+                toVLQ(segments) {
+                    const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                    function encode(v) {
+                        let x = v < 0 ? (-v << 1) | 1 : v << 1;
+                        let s = "";
+                        do {
+                            let d = x & 31;
+                            x >>>= 5;
+                            if (x > 0) d |= 32;
+                            s += B64[d];
+                        } while (x > 0);
+                        return s;
+                    }
+                    let out = "";
+                    let lastGenLine = 0, lastGenCol = 0, lastSrcIdx = 0, lastOrigLine = 0, lastOrigCol = 0;
+                    let firstInLine = true;
+                    for (const seg of segments) {
+                        const [genLine, genCol, srcIdx, origLine, origCol] = seg;
+                        while (lastGenLine < genLine) {
+                            out += ";";
+                            lastGenLine++;
+                            lastGenCol = 0;
+                            firstInLine = true;
+                        }
+                        if (!firstInLine) out += ",";
+                        firstInLine = false;
+                        out += encode(genCol - lastGenCol);
+                        lastGenCol = genCol;
+                        out += encode(srcIdx - lastSrcIdx);
+                        lastSrcIdx = srcIdx;
+                        out += encode(origLine - lastOrigLine);
+                        lastOrigLine = origLine;
+                        out += encode(origCol - lastOrigCol);
+                        lastOrigCol = origCol;
+                    }
+                    return out;
+                },
+                find(mappings, line, col) {
+                    const segs = this.fromVLQ(mappings);
+                    // Find largest seg where (genLine, genCol) <= (line, col).
+                    let best = null;
+                    for (const s of segs) {
+                        if (s[0] > line) break;
+                        if (s[0] === line && s[1] > col) break;
+                        best = s;
+                    }
+                    return best ? { line: best[3], column: best[4], srcIdx: best[2] } : null;
+                },
+            },
             escapeRegExp: (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
             escapeHTML: globalThis.Bun ? globalThis.Bun.escapeHTML : (s) => s,
             fnGetMimeType: (_p) => "application/octet-stream",
