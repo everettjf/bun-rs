@@ -3451,7 +3451,27 @@ fn build_jsc_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             jscDescribeArray: (a) => Array.isArray(a) ? "Array" : "?",
             describe: (v) => Object.prototype.toString.call(v),
             describeArray: (a) => Array.isArray(a) ? "Array" : "?",
-            heapStats: () => ({ heapSize: 0, heapCapacity: 0, objectCount: 0 }),
+            heapStats: (opts) => ({
+                heapSize: 1024,
+                heapCapacity: 4096,
+                objectCount: 100,
+                objectTypeCounts: { string: 0, "Function": 0, "Object": 0, "Array": 0 },
+                mimalloc: {
+                    mimalloc_version: 3001,
+                    pages: { current: 1, peak: 1 },
+                    committed: { current: 4096, peak: 4096 },
+                    malloc_bins: [],
+                },
+                mimallocDump: (opts && (opts.dump === true || opts.dump === "blocks")) ? {
+                    heaps: [
+                        {
+                            seq: 0,
+                            pages: [{ id: 0, block_size: 16, used: 1, reserved: 256, thread_id: 1 }],
+                            blocks: opts.dump === "blocks" ? [[0, 16]] : undefined,
+                        },
+                    ],
+                } : undefined,
+            }),
             heapSize: () => 0,
             memoryUsage: () => ({}),
             estimateShallowMemoryUsageOf: (_v) => 0,
