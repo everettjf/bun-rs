@@ -780,10 +780,7 @@ const GLOBALS: &str = r#"
     const fail = (msg) => { throw new Error(msg); };
     const check = (cond, expected, action) => {
       if (not ? cond : !cond) {
-        // Include the Bun-style "expect(received).<action>(expected)" hint so
-        // grepping stderr for that literal works (matches Bun's pretty-print).
-        const literalHint = `expect(received)${not ? ".not" : ""}.${action}(expected)`;
-        const base = `${literalHint}\n\nReceived: ${fmt(received)}${expected !== undefined ? `\nExpected: ${fmt(expected)}` : ""}`;
+        const base = `expect(${fmt(received)})${not ? ".not" : ""}.${action}(${expected !== undefined ? fmt(expected) : ""})`;
         fail(label ? `${label}\n\nExpected: ${fmt(expected)}\nReceived: ${fmt(received)}` : base);
       }
     };
