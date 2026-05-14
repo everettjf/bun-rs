@@ -2134,7 +2134,17 @@ const BUN_HELPERS: &str = r##"
   Bun.gc = Bun.gc; // already defined
 
   // ── Bun.cron (stub) ────────────────────────────────────────────────
-  Bun.cron = function (_schedule, _handler) { return { stop: () => {} }; };
+  Bun.cron = function (schedule, handler) {
+    if (arguments.length === 0) throw new TypeError("Bun.cron: schedule required");
+    if (typeof schedule !== "string") throw new TypeError("Bun.cron: schedule must be a string");
+    const id = (globalThis.__bun_cron_jobs_next_id = (globalThis.__bun_cron_jobs_next_id || 0) + 1);
+    globalThis.__bun_cron_jobs = globalThis.__bun_cron_jobs || new Map();
+    const job = { id, schedule, handler, stop: () => { globalThis.__bun_cron_jobs.delete(id); }, ref: () => job, unref: () => job };
+    globalThis.__bun_cron_jobs.set(id, job);
+    return job;
+  };
+  Bun.cron.remove = (id) => { if (globalThis.__bun_cron_jobs) globalThis.__bun_cron_jobs.delete(typeof id === "object" && id ? id.id : id); };
+  Bun.cron.list = () => Array.from((globalThis.__bun_cron_jobs || new Map()).values());
   Bun.cron.parse = function (expr, from) {
     const fromMs = from ? (from instanceof Date ? from.getTime() : new Date(from).getTime()) : 0;
     try {
