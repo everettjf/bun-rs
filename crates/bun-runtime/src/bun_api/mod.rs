@@ -419,8 +419,13 @@ const BUN_HELPERS: &str = r##"
     parse(text) {
       if (text === null) throw new TypeError("Bun.JSONL.parse: input must be a string");
       if (text === undefined) throw new TypeError("Bun.JSONL.parse: input must be a string");
+      let s;
+      if (typeof text === "string") s = text;
+      else if (text instanceof Uint8Array) s = new TextDecoder("utf-8").decode(text);
+      else if (text instanceof ArrayBuffer) s = new TextDecoder("utf-8").decode(new Uint8Array(text));
+      else if (ArrayBuffer.isView(text)) s = new TextDecoder("utf-8").decode(new Uint8Array(text.buffer, text.byteOffset, text.byteLength));
+      else s = String(text);
       const out = [];
-      const s = String(text);
       if (s.length === 0) return out;
       // Split into lines first (respecting string quoting on \n).
       const lines = [];
@@ -457,14 +462,30 @@ const BUN_HELPERS: &str = r##"
       }
       return out;
     },
-    parseChunk(input) {
+    parseChunk(input, start, end) {
       // parseChunk returns { values, read, done, error }. Accepts string or typed array.
+      // start/end: byte offsets (Uint8Array) or char offsets (string).
       let s;
-      if (typeof input === "string") s = input;
-      else if (input instanceof Uint8Array) s = new TextDecoder("utf-8").decode(input);
-      else if (input instanceof ArrayBuffer) s = new TextDecoder("utf-8").decode(new Uint8Array(input));
-      else if (ArrayBuffer.isView(input)) s = new TextDecoder("utf-8").decode(new Uint8Array(input.buffer, input.byteOffset, input.byteLength));
-      else throw new TypeError("Bun.JSONL.parseChunk: input must be a string or typed array");
+      if (typeof input === "string") {
+        const sStart = (typeof start === "number") ? start : 0;
+        const sEnd = (typeof end === "number") ? end : input.length;
+        s = input.slice(sStart, sEnd);
+      } else if (input instanceof Uint8Array) {
+        const sStart = (typeof start === "number") ? start : 0;
+        const sEnd = (typeof end === "number") ? end : input.byteLength;
+        s = new TextDecoder("utf-8").decode(input.subarray(sStart, sEnd));
+      } else if (input instanceof ArrayBuffer) {
+        const sStart = (typeof start === "number") ? start : 0;
+        const sEnd = (typeof end === "number") ? end : input.byteLength;
+        s = new TextDecoder("utf-8").decode(new Uint8Array(input, sStart, sEnd - sStart));
+      } else if (ArrayBuffer.isView(input)) {
+        const u8 = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+        const sStart = (typeof start === "number") ? start : 0;
+        const sEnd = (typeof end === "number") ? end : u8.byteLength;
+        s = new TextDecoder("utf-8").decode(u8.subarray(sStart, sEnd));
+      } else {
+        throw new TypeError("Bun.JSONL.parseChunk: input must be a string or typed array");
+      }
       const values = [];
       let read = 0; // number of consumed chars excluding the final \n if any
       let lastConsumedEnd = 0;
