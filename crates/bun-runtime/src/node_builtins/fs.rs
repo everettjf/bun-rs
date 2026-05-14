@@ -266,6 +266,12 @@ fn install_fd_io(ctx: &Context, obj: &bun_jsc::Object<'_>) {
         stat.set_property("size", &Value::new_number(ctx, md.len() as f64)).ok();
         stat.set_property("isFile", &ctx.eval(if md.is_file() { "() => true" } else { "() => false" }, None).unwrap()).ok();
         stat.set_property("isDirectory", &ctx.eval(if md.is_dir() { "() => true" } else { "() => false" }, None).unwrap()).ok();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            stat.set_property("mode", &Value::new_number(ctx, md.permissions().mode() as f64)).ok();
+        }
+        #[cfg(not(unix))]
         stat.set_property("mode", &Value::new_number(ctx, 0.0)).ok();
         stat.set_property("uid", &Value::new_number(ctx, 0.0)).ok();
         stat.set_property("gid", &Value::new_number(ctx, 0.0)).ok();
@@ -677,6 +683,22 @@ fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
             .to_object()
             .unwrap();
         install_methods.call(None, &[v]).unwrap();
+        // mode (unix permissions). Tests expect 0o644 etc.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            obj.set_property("mode", &Value::new_number(ctx, md.permissions().mode() as f64)).ok();
+        }
+        #[cfg(not(unix))]
+        obj.set_property("mode", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("uid", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("gid", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("blksize", &Value::new_number(ctx, 4096.0)).ok();
+        obj.set_property("blocks", &Value::new_number(ctx, ((md.len() + 511) / 512) as f64)).ok();
+        obj.set_property("ino", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("dev", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("rdev", &Value::new_number(ctx, 0.0)).ok();
+        obj.set_property("nlink", &Value::new_number(ctx, 1.0)).ok();
         // mtime / atime / birthtime as milliseconds since epoch.
         for (k, t) in [
             ("mtimeMs", md.modified().ok()),
