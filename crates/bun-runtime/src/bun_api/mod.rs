@@ -1322,7 +1322,13 @@ const BUN_HELPERS: &str = r##"
         delete opts2.name; delete opts2.value;
         return new Cookie(newName, newValue, opts2);
       }
-      this.name = String(name);
+      // .name is immutable (write-once + non-configurable).
+      Object.defineProperty(this, "name", {
+        value: String(name),
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
       this.value = String(value !== undefined ? value : "");
       const o = opts || {};
       this.domain = o.domain || null;
