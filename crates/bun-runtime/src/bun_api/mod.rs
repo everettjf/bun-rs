@@ -1312,6 +1312,41 @@ const BUN_HELPERS: &str = r##"
   Object.defineProperty(Bun, "argv", { get() { return process.argv; } });
   // Bun.main is writable; default is the running script.
   globalThis.__bun_main_override = undefined;
+  // Object.setPrototypeOf(globalThis, p) — JSC's globalThis has an immutable
+  // prototype, but Bun allows mutation. Patch setPrototypeOf to install
+  // a global "shadow" prototype that adds properties read through globalThis.
+  (function () {
+    const origSetProto = Object.setPrototypeOf;
+    let shadowProto = null;
+    Object.setPrototypeOf = function (target, proto) {
+      if (target === globalThis) {
+        // Track + install the new properties as globals via getter.
+        if (shadowProto) {
+          for (const k of Object.getOwnPropertyNames(shadowProto)) {
+            try { delete globalThis[k]; } catch {}
+          }
+        }
+        shadowProto = proto;
+        if (proto && proto !== Object.prototype) {
+          for (const k of Object.getOwnPropertyNames(proto)) {
+            const d = Object.getOwnPropertyDescriptor(proto, k);
+            if (!d) continue;
+            try {
+              const desc = { enumerable: true, configurable: true };
+              if (d.get || d.set) { desc.get = d.get; desc.set = d.set; }
+              else { desc.value = d.value; desc.writable = d.writable !== undefined ? d.writable : true; }
+              Object.defineProperty(globalThis, k, desc);
+            } catch (e) {
+              try { globalThis[k] = d.value; } catch {}
+            }
+          }
+        }
+        return target;
+      }
+      return origSetProto.call(this, target, proto);
+    };
+  })();
+
   // ShadowRealm — simulate with a separate scope using new Function eval.
   // Each ShadowRealm gets its own globalThis-like object that doesn't leak
   // to the outer realm.
