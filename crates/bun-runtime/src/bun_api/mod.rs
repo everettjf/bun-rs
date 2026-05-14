@@ -1582,11 +1582,13 @@ const BUN_HELPERS: &str = r##"
       u.json = () => JSON.parse(new TextDecoder("utf-8").decode(u));
       return u;
     }
+    // Bun's spawnSync: exitCode is null when killed by signal; signalCode is
+    // SIGTERM-ish for timeouts.
     return {
       stdout: wrapStdio(r.stdout) || new Uint8Array(0),
       stderr: wrapStdio(r.stderr) || new Uint8Array(0),
-      exitCode: r.status === null ? -1 : r.status,
-      success: r.status === 0,
+      exitCode: r.signal ? null : (r.status === null ? -1 : r.status),
+      success: r.status === 0 && !r.signal,
       signalCode: r.signal,
       pid: 0,
       resourceUsage: () => ({}),

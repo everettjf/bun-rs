@@ -144,6 +144,19 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 }
             }
         }
+        // Optional `timeout` (ms): kill the child after the deadline and
+        // return signal=SIGTERM, status=null.
+        let timeout_ms: Option<u64> = if opts.is_object() {
+            opts.to_object().ok().and_then(|o| {
+                o.get_property("timeout").ok().and_then(|v| {
+                    let n = v.to_number();
+                    if n.is_finite() && n > 0.0 { Some(n as u64) } else { None }
+                })
+            })
+        } else {
+            None
+        };
+        let mut timed_out = false;
         let out = match {
             if let Some(bytes) = stdin_bytes {
                 use std::io::Write;
@@ -155,6 +168,49 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                     Ok(mut child) => {
                         if let Some(mut sin) = child.stdin.take() {
                             let _ = sin.write_all(&bytes);
+                        }
+                        if let Some(ms) = timeout_ms {
+                            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+                            loop {
+                                match child.try_wait() {
+                                    Ok(Some(_)) => break,
+                                    Ok(None) => {
+                                        if std::time::Instant::now() >= deadline {
+                                            let _ = child.kill();
+                                            timed_out = true;
+                                            break;
+                                        }
+                                        std::thread::sleep(std::time::Duration::from_millis(10));
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                        child.wait_with_output()
+                    }
+                    Err(e) => Err(e),
+                }
+            } else if let Some(ms) = timeout_ms {
+                let child_res = cmd
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+                match child_res {
+                    Ok(mut child) => {
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+                        loop {
+                            match child.try_wait() {
+                                Ok(Some(_)) => break,
+                                Ok(None) => {
+                                    if std::time::Instant::now() >= deadline {
+                                        let _ = child.kill();
+                                        timed_out = true;
+                                        break;
+                                    }
+                                    std::thread::sleep(std::time::Duration::from_millis(10));
+                                }
+                                Err(_) => break,
+                            }
                         }
                         child.wait_with_output()
                     }
@@ -184,12 +240,17 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
         let ctx = args.context();
         let result = ctx.eval("({})", Some("[spawnSync]")).unwrap();
         let r = result.to_object().unwrap();
-        r.set_property(
-            "status",
-            &Value::new_number(ctx, out.status.code().unwrap_or(-1) as f64),
-        )
-        .unwrap();
-        r.set_property("signal", &Value::new_null(ctx)).unwrap();
+        if timed_out {
+            r.set_property("status", &Value::new_null(ctx)).unwrap();
+            r.set_property("signal", &Value::new_string(ctx, "SIGTERM")).unwrap();
+        } else {
+            r.set_property(
+                "status",
+                &Value::new_number(ctx, out.status.code().unwrap_or(-1) as f64),
+            )
+            .unwrap();
+            r.set_property("signal", &Value::new_null(ctx)).unwrap();
+        }
         r.set_property("pid", &Value::new_number(ctx, 0.0)).unwrap();
 
         let make_body = |bytes: Vec<u8>| match encoding.as_deref() {
