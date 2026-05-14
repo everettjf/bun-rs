@@ -1297,6 +1297,16 @@ const BUN_HELPERS: &str = r##"
   class Cookie {
     constructor(name, value, opts) {
       if (name === undefined) throw new TypeError("Cookie name required");
+      // Single-object form: new Cookie({name, value, ...attrs})
+      if (typeof name === "object" && name !== null && !(name instanceof Cookie)) {
+        const obj = name;
+        if (obj.name === undefined) throw new TypeError("Cookie name required");
+        const newName = obj.name;
+        const newValue = obj.value;
+        const opts2 = { ...obj };
+        delete opts2.name; delete opts2.value;
+        return new Cookie(newName, newValue, opts2);
+      }
       this.name = String(name);
       this.value = String(value !== undefined ? value : "");
       const o = opts || {};
