@@ -200,6 +200,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             globalThis.__bun_assertion_state.hasAny = false;
                             // Reset onTestFinished hooks for this test.
                             globalThis.__bun_current_finally = [];
+                            // Reset inner-afterAll hooks (registered by
+                            // afterAll() calls inside the test body).
+                            globalThis.__bun_inner_afterAll = [];
                             let result;
                             try {
                                 result = await (t.fn.length >= 1
@@ -243,6 +246,13 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                 }
                                 throw e;
                             }
+                            // Inner afterAll hooks: registered via afterAll()
+                            // inside the test body. Fire before afterEach.
+                            const innerAfterAlls = globalThis.__bun_inner_afterAll || [];
+                            for (const h of innerAfterAlls) {
+                                try { await runHook(h); } catch {}
+                            }
+                            globalThis.__bun_inner_afterAll = undefined;
                             // afterEach: inner-most first (jest semantics).
                             for (let i = t.afterEach.length - 1; i >= 0; i--) {
                                 await runHook(t.afterEach[i]);
@@ -586,7 +596,15 @@ const GLOBALS: &str = r#"
   });
 
   g.beforeAll = (fn) => curr().beforeAll.push(fn);
-  g.afterAll = (fn) => curr().afterAll.push(fn);
+  g.afterAll = (fn) => {
+    // When called inside a test body, register as an "inner afterAll" for
+    // the currently-running test (fires after the body, before afterEach).
+    if (g.__bun_inner_afterAll !== undefined) {
+      g.__bun_inner_afterAll.push(fn);
+      return;
+    }
+    curr().afterAll.push(fn);
+  };
   g.beforeEach = (fn) => curr().beforeEach.push(fn);
   g.afterEach = (fn) => curr().afterEach.push(fn);
 
