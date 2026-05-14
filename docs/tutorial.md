@@ -1,7 +1,12 @@
 # bun-rs tutorial
 
-A 30-minute walk-through of bun-rs 0.1. Each step is something you can paste
-into a terminal and run.
+A 30-minute walk-through. Each step is something you can paste into a
+terminal and run.
+
+> Heads-up: bun-rs is an experimental hobby project. The features shown
+> here all work as written, but anything beyond them may throw, return a
+> stub, or behave subtly differently from real Bun. See
+> [`capabilities.md`](capabilities.md) for the honest list.
 
 ## 0. Install
 
@@ -27,7 +32,7 @@ alias bunrs="$(pwd)/target/release/bun-rs"
 Confirm it works:
 
 ```sh
-bunrs --version       # bun-rs 0.1.0
+bunrs --version       # bare version number, e.g. 1.0.3
 bunrs -p "1 + 1"      # 2
 ```
 
@@ -307,6 +312,31 @@ doesn't parse yet, you get a `...` continuation prompt.
 
 ## 10. What to read next
 
-- [`guide.md`](guide.md) — full reference: every API we ship, with caveats.
-- [`roadmap.md`](roadmap.md) — what's planned for 0.2 / 0.3 / 1.0.
+- [`capabilities.md`](capabilities.md) — what works, what's a stub, what
+  throws. The most candid source.
+- [`guide.md`](guide.md) — fuller API reference with examples.
+- [`roadmap.md`](roadmap.md) — what's planned next.
 - [`plan.md`](plan.md) — the day-by-day build log.
+
+## 11. Things that look like they should work but don't
+
+These are bun-rs's known sharp edges. Reach for real Bun (or Node) if you
+hit any of them — see [`capabilities.md`](capabilities.md) for the full
+list.
+
+- `proc.stdin.write(...)` after `Bun.spawn(...)` — async stdin is not a
+  writable stream yet. Use `Bun.spawnSync({input: …})` for now.
+- `import x from "./data.toml" with { type: "toml" }` — import attributes
+  are unparsed. Use file extension instead: `import x from "./data.toml"`.
+- `Bun.password.hash(pw, "argon2id")` — runs HMAC-SHA256 under the hood,
+  not argon2. Compatible API, incompatible bytes.
+- `Worker`, `node:worker_threads`, `Bun.isMainThread === false` — no
+  worker support; `Bun.isMainThread` is always `true`.
+- `Bun.listen` / `Bun.connect` and `node:net.createServer` — raw TCP/UDP
+  not implemented; everything HTTP-shaped goes through hyper/reqwest.
+- `jest.useFakeTimers()` + `jest.setSystemTime(d)` — `Date` mocking would
+  require JSC native hooks we don't have.
+- Stack traces are JSC-style (`name@url:line:col`). Tests that grep for
+  V8's `at name (url:line:col)` will not match.
+- Snapshot files are created on first call but never diffed or rewritten;
+  `expect(x).toMatchSnapshot()` always passes (apart from arg validation).

@@ -1,10 +1,20 @@
 # bun-rs
 
+> **⚠️ This is an experimental hobby project. It is not production-ready and is very rough around the edges.**
+>
+> The goal is to fully rewrite Bun in Rust as a personal toy project.
+> (Note: the [official Bun project](https://github.com/oven-sh/bun) was itself rewritten from Zig to Rust — this repo
+> is unrelated to that effort and exists purely for fun and learning.)
+>
+> See [`docs/capabilities.md`](docs/capabilities.md) for a candid breakdown of what does and does
+> not work today.
+
 A Rust port of [Bun.js](https://github.com/oven-sh/bun), backed by JavaScriptCore via FFI.
 
-**Status:** 1.0.0 — TypeScript runtime with the public surface
-documented in [`docs/guide.md`](docs/guide.md) considered stable.
-Anything we'd break would be 2.0.
+**Status:** experimental — Bun's official test suite under `test/js/bun` passes
+~38.9 % of files (159 / 409) as of the last run. Many APIs exist as best-effort
+stubs that pass shape checks but skip the real implementation (e.g. argon2,
+real TCP/UDP, JIT, snapshot file diffing).
 
 What you get out of the box:
 - `bun-rs run app.ts` — TypeScript + full ESM (static + dynamic
