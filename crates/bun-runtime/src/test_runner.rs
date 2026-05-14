@@ -587,7 +587,7 @@ const GLOBALS: &str = r#"
   // Build a function that returns the each-runner for either `test` or
   // `test.skip` / `test.only` / etc. so chains like `test.each([...]).skipIf(b)`
   // are themselves functions you can call with (name, fn).
-  function makeEach(targetFn) {
+  function makeEach(asSkip) {
     return (rows) => {
       const runner = (name, fn) => {
         for (const row of rows) {
@@ -599,21 +599,17 @@ const GLOBALS: &str = r#"
           } else {
             wrapper = () => fn(...args);
           }
-          if (targetFn === g.test) {
-            pushTest(fmtEachName(name, row), wrapper);
-          } else if (targetFn === g.test.skip) {
-            pushTest(fmtEachName(name, row) + " (skipped)", wrapper, { skip: true });
-          } else {
-            pushTest(fmtEachName(name, row), wrapper);
-          }
+          const displayName = asSkip
+            ? fmtEachName(name, row) + " (skipped)"
+            : fmtEachName(name, row);
+          pushTest(displayName, wrapper, asSkip ? { skip: true } : undefined);
         }
       };
-      // Chain modifiers: each(rows).skipIf(cond)(name, fn).
-      runner.skipIf = (cond) => cond ? makeEach(g.test.skip)(rows) : runner;
-      runner.todoIf = (cond) => cond ? makeEach(g.test.todo || g.test.skip)(rows) : runner;
-      runner.if = (cond) => cond ? runner : makeEach(g.test.skip)(rows);
-      runner.skip = makeEach(g.test.skip)(rows);
-      runner.only = runner; // treat .only same as plain
+      // Chain modifiers: each(rows).skipIf(cond)(name, fn) etc.
+      runner.skipIf = (cond) => cond ? makeEach(true)(rows) : runner;
+      runner.todoIf = (cond) => cond ? makeEach(true)(rows) : runner;
+      runner.if = (cond) => cond ? runner : makeEach(true)(rows);
+      runner.only = runner;
       return runner;
     };
   }
@@ -635,8 +631,9 @@ const GLOBALS: &str = r#"
     }
   };
   // Replace test.each with the chainable version.
-  g.test.each = makeEach(g.test);
+  g.test.each = makeEach(false);
   g.it.each = g.test.each;
+  g.test.skip.each = makeEach(true);
   g.describe.each = g.describe.each || ((rows) => (name, body) => {
     for (const row of rows) {
       const args = Array.isArray(row) ? row : [row];
