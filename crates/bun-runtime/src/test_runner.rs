@@ -218,12 +218,17 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             globalThis.__bun_inner_afterAll = [];
                             let result;
                             try {
-                                result = await (t.fn.length >= 1
+                                const tmo = t.timeout || 5000;
+                                const runFn = t.fn.length >= 1
                                   ? new Promise((res, rej) => {
                                       const done = (e) => { if (e) rej(e); else res(); };
                                       Promise.resolve(t.fn(done)).then(undefined, rej);
                                     })
-                                  : t.fn());
+                                  : Promise.resolve().then(() => t.fn());
+                                const timeoutP = new Promise((_, rej) => {
+                                    setTimeout(() => rej(new Error(`timed out after ${tmo}ms`)), tmo);
+                                });
+                                result = await Promise.race([runFn, timeoutP]);
                                 void result;
                                 // Validate expect.assertions(N) / hasAssertions().
                                 const st = globalThis.__bun_assertion_state;
@@ -238,7 +243,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     throw err;
                                 }
                             } catch (e) {
-                                if (t.failing && !(e && e.__bun_failing_marker)) {
+                                // Test timeouts are always failures, even for .failing tests.
+                                const isTimeout = e && e.message && /timed out after/.test(e.message);
+                                if (t.failing && !(e && e.__bun_failing_marker) && !isTimeout) {
                                     // .failing: error is expected; treat as pass.
                                     // afterEach: inner→outer (reverse order).
                                     for (let i = t.afterEach.length - 1; i >= 0; i--) {
@@ -280,8 +287,8 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             pass++;
                         } catch (e) {
                             const msg = e && e.message ? e.message : String(e);
-                            console.log("  ✗ " + fullName + " — " + msg);
-                            if (e && e.stack) console.log("    " + String(e.stack).split("\n").join("\n    "));
+                            console.error("  ✗ " + fullName + " — " + msg);
+                            if (e && e.stack) console.error("    " + String(e.stack).split("\n").join("\n    "));
                             fail++;
                             failed.push(fullName);
                         }
@@ -500,6 +507,7 @@ const GLOBALS: &str = r#"
   function pushTest(name, fn, opts) {
     const c = curr();
     const skip = !!(opts && opts.skip) || !!c.forceSkip;
+    const timeout = (opts && typeof opts.timeout === "number") ? opts.timeout : (g.__bun_test_default_timeout || 5000);
     g.__bun_test_collector.push({
       name, fn,
       path: c.path,
@@ -508,17 +516,21 @@ const GLOBALS: &str = r#"
       beforeEach: [...c.beforeEach],
       afterEach: [...c.afterEach],
       skip,
+      timeout,
       failing: !!(opts && opts.failing),
     });
   }
 
   g.test = (name, fn, opts) => {
-    if (opts && typeof opts === "object") {
+    let timeout;
+    if (typeof opts === "number") timeout = opts;
+    else if (opts && typeof opts === "object") {
       if (opts.retry !== undefined && opts.repeats !== undefined) {
         throw new Error("Cannot set both retry and repeats on a test");
       }
+      if (typeof opts.timeout === "number") timeout = opts.timeout;
     }
-    return pushTest(name, fn);
+    return pushTest(name, fn, { timeout });
   };
   g.it = g.test;
   g.test.skip = (name) => pushTest(name, () => {}, { skip: true });

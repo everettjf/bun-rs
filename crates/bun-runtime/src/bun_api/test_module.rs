@@ -144,7 +144,7 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 beforeEach: globalThis.beforeEach,
                 afterEach: globalThis.afterEach,
                 mock,
-                jest: { fn: mock, mock: mock.module, spyOn: function () { return mkMock(); }, useFakeTimers: () => {}, useRealTimers: () => {}, clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {}, setTimeout: (_ms) => {}, setSystemTime: (_t) => {}, advanceTimersByTime: (_ms) => {}, runOnlyPendingTimers: () => {}, runAllTimers: () => {}, requireActual: (m) => globalThis.require(m), requireMock: (m) => globalThis.require(m), retryTimes: (_n) => {} },
+                jest: { fn: mock, mock: mock.module, spyOn: function () { return mkMock(); }, useFakeTimers: () => {}, useRealTimers: () => {}, clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {}, setTimeout: (ms) => { globalThis.__bun_test_default_timeout = ms; }, setSystemTime: (_t) => {}, advanceTimersByTime: (_ms) => {}, runOnlyPendingTimers: () => {}, runAllTimers: () => {}, requireActual: (m) => globalThis.require(m), requireMock: (m) => globalThis.require(m), retryTimes: (_n) => {} },
                 vi: { fn: mock, mock: mock.module, spyOn: function () { return mkMock(); }, useFakeTimers: () => {}, useRealTimers: () => {}, advanceTimersByTime: () => {}, runAllTimers: () => {}, clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {} },
                 spyOn: function (obj, key) {
                     const orig = obj[key];
@@ -157,7 +157,7 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                     return m;
                 },
                 setSystemTime: () => {},
-                setDefaultTimeout: () => {},
+                setDefaultTimeout: (ms) => { globalThis.__bun_test_default_timeout = ms; },
                 expectTypeOf: globalThis.expectTypeOf || (() => new Proxy(function(){}, { get: () => () => undefined, apply: () => undefined })),
                 // onTestFinished / onTestFailed — register a cleanup hook
                 // that runs at end of current test (or describe).
