@@ -683,7 +683,7 @@ fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>>
         })"#),
         "strip-ansi" => Some(r#"({
             __esModule: true,
-            default: (s) => String(s).replace(/\[[0-9;]*[a-zA-Z]/g, "").replace(/\][^]*/g, ""),
+            default: (s) => globalThis.Bun ? globalThis.Bun.stripANSI(s) : String(s).replace(/\[[0-9;]*[a-zA-Z]/g, ""),
         })"#),
         "string-width" => Some(r#"({
             __esModule: true,

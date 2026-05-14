@@ -238,6 +238,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "json5",
  "libffi",
  "libloading",
  "md-5",

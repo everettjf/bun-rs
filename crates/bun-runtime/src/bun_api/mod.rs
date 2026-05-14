@@ -195,6 +195,14 @@ pub fn install_bun(ctx: &Context) {
     });
 
     // Bun.markdown — backed by pulldown-cmark (CommonMark + GFM tables).
+    bind(ctx, &bun, "__rust_json5_parse", |args| {
+        let src = args.get(0).to_string();
+        let value: serde_json::Value = json5::from_str(&src)
+            .map_err(|e| format!("JSON5 parse error: {e}"))?;
+        let canonical = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+        Ok(Value::new_string(args.context(), &canonical))
+    });
+
     bind(ctx, &bun, "__rust_transpile", |args| {
         let src = args.get(0).to_string();
         let loader = if args.len() >= 2 { args.get(1).to_string() } else { "tsx".to_string() };
@@ -308,10 +316,17 @@ const BUN_HELPERS: &str = r##"
       parse(text, reviver) {
         let s = String(text);
         _maxDepthCheck(s);
-        // Strip /* ... */ and // ... comments.
+        // Try real JSON5 parser first (Rust json5 crate).
+        if (typeof globalThis.Bun !== "undefined" && globalThis.Bun.__rust_json5_parse) {
+          try {
+            const canon = globalThis.Bun.__rust_json5_parse(s);
+            return JSON.parse(canon, reviver);
+          } catch (e) {
+            // Fall back to lenient JSON parse below.
+          }
+        }
         s = s.replace(/\/\*[\s\S]*?\*\//g, "");
         s = s.replace(/(^|[^:"])\/\/.*$/gm, "$1");
-        // Trailing commas before } or ].
         s = s.replace(/,\s*([}\]])/g, "$1");
         return JSON.parse(s, reviver);
       },
