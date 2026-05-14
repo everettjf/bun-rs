@@ -825,29 +825,19 @@ const GLOBALS: &str = r#"
       toThrow(matcher) {
         let caught;
         let didThrow = false;
-        let result;
-        try { result = received(); } catch (e) { caught = e; didThrow = true; }
-        function evalMatch() {
-          return didThrow && (
-            matcher === undefined
-            || (matcher && matcher.__bun_match && typeof matcher.asymmetricMatch === "function" && matcher.asymmetricMatch(caught))
-            || (matcher instanceof RegExp ? matcher.test((caught && caught.message) || String(caught))
-              : typeof matcher === "string" ? ((caught && caught.message) || String(caught)).includes(matcher)
-              : typeof matcher === "function" ? caught instanceof matcher
-              : (matcher && typeof matcher === "object") ? (
-                  caught && Object.keys(matcher).every(k => deepEq(caught[k], matcher[k]))
-                )
-              : false)
-          );
-        }
-        // If the call returned a Promise, await its rejection (async-throw form).
-        if (!didThrow && result && typeof result.then === "function") {
-          return result.then(
-            () => { check(evalMatch(), matcher, "toThrow"); },
-            (e) => { caught = e; didThrow = true; check(evalMatch(), matcher, "toThrow"); }
-          );
-        }
-        check(evalMatch(), matcher, "toThrow");
+        try { received(); } catch (e) { caught = e; didThrow = true; }
+        const matched = didThrow && (
+          matcher === undefined
+          || (matcher && matcher.__bun_match && typeof matcher.asymmetricMatch === "function" && matcher.asymmetricMatch(caught))
+          || (matcher instanceof RegExp ? matcher.test((caught && caught.message) || String(caught))
+            : typeof matcher === "string" ? ((caught && caught.message) || String(caught)).includes(matcher)
+            : typeof matcher === "function" ? caught instanceof matcher
+            : (matcher && typeof matcher === "object") ? (
+                caught && Object.keys(matcher).every(k => deepEq(caught[k], matcher[k]))
+              )
+            : false)
+        );
+        check(matched, matcher, "toThrow");
       },
       toBeInstanceOf(cls) { check(received instanceof cls, cls.name, "toBeInstanceOf"); },
       toBeGreaterThan(n) { check(received > n, n, "toBeGreaterThan"); },
