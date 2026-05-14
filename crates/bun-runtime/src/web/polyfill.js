@@ -181,9 +181,13 @@
         return Promise.resolve(new Blob([u8], { type: ct }));
       },
       formData() {
+        if (!(this instanceof Request) && !(this instanceof Response)) {
+          const err = new TypeError("Expected this to be instanceof Request");
+          err.code = "ERR_INVALID_THIS";
+          return Promise.reject(err);
+        }
         if (this._bodyUsed) return Promise.reject(new TypeError("Body already consumed"));
         this._bodyUsed = true;
-        // Best-effort form-data parse only handles application/x-www-form-urlencoded.
         const ct = this.headers && this.headers.get ? (this.headers.get("content-type") || "") : "";
         const fd = new FormData();
         if (ct.includes("application/x-www-form-urlencoded")) {

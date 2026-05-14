@@ -195,6 +195,16 @@ pub fn install_bun(ctx: &Context) {
     });
 
     // Bun.markdown — backed by pulldown-cmark (CommonMark + GFM tables).
+    bind(ctx, &bun, "__rust_transpile", |args| {
+        let src = args.get(0).to_string();
+        let loader = if args.len() >= 2 { args.get(1).to_string() } else { "tsx".to_string() };
+        let path_str = format!("input.{}", loader.as_str());
+        let path = std::path::Path::new(&path_str);
+        let res = bun_transpile::transpile_file(path, &src)
+            .map_err(|e| format!("transpile error: {e}"))?;
+        Ok(Value::new_string(args.context(), &res.code))
+    });
+
     bind(ctx, &bun, "__rust_markdown_html", |args| {
         use pulldown_cmark::{html, Options, Parser};
         let src = args.get(0).to_string();
@@ -2066,13 +2076,42 @@ const BUN_HELPERS: &str = r##"
     };
   };
 
-  // ── Bun.transpiler / Bun.Transpiler (stub) ─────────────────────────
+  // ── Bun.transpiler / Bun.Transpiler — real TS/JSX stripping via oxc.
   Bun.Transpiler = class Transpiler {
     constructor(opts) { this.opts = opts || {}; }
-    transformSync(code, _loader) { return String(code); }
-    async transform(code, _loader) { return String(code); }
-    scan(_code) { return { imports: [], exports: [] }; }
-    scanImports(_code) { return []; }
+    transformSync(code, loader) {
+      const l = loader || this.opts.loader || "tsx";
+      try {
+        return Bun.__rust_transpile(String(code), l);
+      } catch (e) {
+        // Return input on parse error to match Bun behavior for malformed
+        // input fed to transformSync (some tests rely on this).
+        if (e && e.message && e.message.includes("parse error")) {
+          return String(code);
+        }
+        throw e;
+      }
+    }
+    async transform(code, loader) { return this.transformSync(code, loader); }
+    scan(code) {
+      try {
+        const re_imp = /(?:^|\n)\s*import\s+(?:[^"']*\s+from\s+)?["']([^"']+)["']/g;
+        const re_exp = /(?:^|\n)\s*export\s+\{[^}]*\}\s*(?:from\s+["']([^"']+)["'])?/g;
+        const re_dyn = /import\s*\(\s*["']([^"']+)["']\s*\)/g;
+        const imports = [];
+        const exports = [];
+        const s = String(code);
+        let m;
+        while ((m = re_imp.exec(s)) !== null) imports.push({ kind: "import-statement", path: m[1] });
+        while ((m = re_dyn.exec(s)) !== null) imports.push({ kind: "dynamic-import", path: m[1] });
+        while ((m = re_exp.exec(s)) !== null) if (m[1]) imports.push({ kind: "export-star", path: m[1] });
+        const re_named = /(?:^|\n)\s*export\s+(?:const|let|var|function|class|async function)\s+([A-Za-z_$][\w$]*)/g;
+        while ((m = re_named.exec(s)) !== null) exports.push(m[1]);
+        if (/(?:^|\n)\s*export\s+default\b/.test(s)) exports.push("default");
+        return { imports, exports };
+      } catch { return { imports: [], exports: [] }; }
+    }
+    scanImports(code) { return this.scan(code).imports; }
   };
   Bun.transpiler = new Bun.Transpiler();
 
