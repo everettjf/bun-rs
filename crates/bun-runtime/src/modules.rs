@@ -257,9 +257,10 @@ fn load_module<'ctx>(
     }
 
     // Make empty exports object and stash BEFORE running the body so cycles
-    // see a partial.
+    // see a partial. Use Object.create(null) so namespaces don't inherit
+    // Object.prototype methods (matches Bun, blocks prototype pollution).
     let exports_val = ctx
-        .eval("({})", Some("[module-exports]"))
+        .eval("Object.create(null)", Some("[module-exports]"))
         .map_err(|e| LoaderRuntimeError::Eval {
             path: abs.clone(),
             message: e.to_string(),
