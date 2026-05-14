@@ -1651,8 +1651,7 @@ const BUN_HELPERS: &str = r##"
       if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to update");
       if (input === undefined || input === null) throw new TypeError("CryptoHasher.update: input required");
       if (input instanceof Blob) input = new Uint8Array(input._bytes || []);
-      if (input && input.path !== undefined && input.text !== undefined && !ArrayBuffer.isView(input)) {
-        // Bun.file — not supported sync.
+      if (input && typeof input === "object" && !ArrayBuffer.isView(input) && !(input instanceof ArrayBuffer) && !(input instanceof Blob) && typeof input.text === "function" && typeof input.bytes === "function" && typeof input.exists === "function") {
         throw new TypeError("Bun.file in CryptoHasher is not supported yet");
       }
       this._h.update(input, encoding);
