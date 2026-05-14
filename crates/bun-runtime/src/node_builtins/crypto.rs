@@ -8,87 +8,166 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 type Md5 = md5::Md5;
+type Md4 = md4::Md4;
 type Sha1 = sha1::Sha1;
+type Sha224 = sha2::Sha224;
 type Sha256 = sha2::Sha256;
 type Sha384 = sha2::Sha384;
 type Sha512 = sha2::Sha512;
+type Sha512_224 = sha2::Sha512_224;
+type Sha512_256 = sha2::Sha512_256;
+type Sha3_224 = sha3::Sha3_224;
+type Sha3_256 = sha3::Sha3_256;
+type Sha3_384 = sha3::Sha3_384;
+type Sha3_512 = sha3::Sha3_512;
+type Ripemd160 = ripemd::Ripemd160;
+type Blake2b512 = blake2::Blake2b512;
+type Blake2s256 = blake2::Blake2s256;
 
 /// Enum dispatch over the supported algorithms. Generic `Digest` types don't
 /// play nicely with `Box<dyn Trait>` for our use case, so we list each kind.
 enum Hasher {
+    Md4(Md4),
     Md5(Md5),
     Sha1(Sha1),
+    Sha224(Sha224),
     Sha256(Sha256),
     Sha384(Sha384),
     Sha512(Sha512),
+    Sha512_224(Sha512_224),
+    Sha512_256(Sha512_256),
+    Sha3_224(Sha3_224),
+    Sha3_256(Sha3_256),
+    Sha3_384(Sha3_384),
+    Sha3_512(Sha3_512),
+    Ripemd160(Ripemd160),
+    Blake2b512(Blake2b512),
+    Blake2s256(Blake2s256),
 }
 
 impl Hasher {
     fn new(alg: &str) -> Option<Self> {
         Some(match alg.to_lowercase().as_str() {
+            "md4" => Hasher::Md4(Md4::new()),
             "md5" => Hasher::Md5(Md5::new()),
             "sha1" => Hasher::Sha1(Sha1::new()),
+            "sha224" => Hasher::Sha224(Sha224::new()),
             "sha256" => Hasher::Sha256(Sha256::new()),
             "sha384" => Hasher::Sha384(Sha384::new()),
             "sha512" => Hasher::Sha512(Sha512::new()),
+            "sha512-224" | "sha512_224" => Hasher::Sha512_224(Sha512_224::new()),
+            "sha512-256" | "sha512_256" => Hasher::Sha512_256(Sha512_256::new()),
+            "sha3-224" | "sha3_224" => Hasher::Sha3_224(Sha3_224::new()),
+            "sha3-256" | "sha3_256" => Hasher::Sha3_256(Sha3_256::new()),
+            "sha3-384" | "sha3_384" => Hasher::Sha3_384(Sha3_384::new()),
+            "sha3-512" | "sha3_512" => Hasher::Sha3_512(Sha3_512::new()),
+            "ripemd160" => Hasher::Ripemd160(Ripemd160::new()),
+            "blake2b512" | "blake2b-512" => Hasher::Blake2b512(Blake2b512::new()),
+            "blake2s256" | "blake2s-256" => Hasher::Blake2s256(Blake2s256::new()),
             _ => return None,
         })
     }
     fn update(&mut self, data: &[u8]) {
         match self {
+            Hasher::Md4(h) => h.update(data),
             Hasher::Md5(h) => h.update(data),
             Hasher::Sha1(h) => h.update(data),
+            Hasher::Sha224(h) => h.update(data),
             Hasher::Sha256(h) => h.update(data),
             Hasher::Sha384(h) => h.update(data),
             Hasher::Sha512(h) => h.update(data),
+            Hasher::Sha512_224(h) => h.update(data),
+            Hasher::Sha512_256(h) => h.update(data),
+            Hasher::Sha3_224(h) => h.update(data),
+            Hasher::Sha3_256(h) => h.update(data),
+            Hasher::Sha3_384(h) => h.update(data),
+            Hasher::Sha3_512(h) => h.update(data),
+            Hasher::Ripemd160(h) => h.update(data),
+            Hasher::Blake2b512(h) => h.update(data),
+            Hasher::Blake2s256(h) => h.update(data),
         }
     }
     fn finalize(self) -> Vec<u8> {
         match self {
+            Hasher::Md4(h) => h.finalize().to_vec(),
             Hasher::Md5(h) => h.finalize().to_vec(),
             Hasher::Sha1(h) => h.finalize().to_vec(),
+            Hasher::Sha224(h) => h.finalize().to_vec(),
             Hasher::Sha256(h) => h.finalize().to_vec(),
             Hasher::Sha384(h) => h.finalize().to_vec(),
             Hasher::Sha512(h) => h.finalize().to_vec(),
+            Hasher::Sha512_224(h) => h.finalize().to_vec(),
+            Hasher::Sha512_256(h) => h.finalize().to_vec(),
+            Hasher::Sha3_224(h) => h.finalize().to_vec(),
+            Hasher::Sha3_256(h) => h.finalize().to_vec(),
+            Hasher::Sha3_384(h) => h.finalize().to_vec(),
+            Hasher::Sha3_512(h) => h.finalize().to_vec(),
+            Hasher::Ripemd160(h) => h.finalize().to_vec(),
+            Hasher::Blake2b512(h) => h.finalize().to_vec(),
+            Hasher::Blake2s256(h) => h.finalize().to_vec(),
         }
     }
 }
 
 enum Hmacker {
+    Md5(hmac::Hmac<Md5>),
+    Md4(hmac::Hmac<Md4>),
     Sha1(hmac::Hmac<Sha1>),
     Sha256(hmac::Hmac<Sha256>),
     Sha384(hmac::Hmac<Sha384>),
     Sha512(hmac::Hmac<Sha512>),
-    Md5(hmac::Hmac<Md5>),
+    Sha3_224(hmac::Hmac<Sha3_224>),
+    Sha3_256(hmac::Hmac<Sha3_256>),
+    Sha3_384(hmac::Hmac<Sha3_384>),
+    Sha3_512(hmac::Hmac<Sha3_512>),
+    Ripemd160(hmac::Hmac<Ripemd160>),
 }
 
 impl Hmacker {
     fn new(alg: &str, key: &[u8]) -> Option<Self> {
         Some(match alg.to_lowercase().as_str() {
+            "md4" => Hmacker::Md4(hmac::Hmac::<Md4>::new_from_slice(key).ok()?),
+            "md5" => Hmacker::Md5(hmac::Hmac::<Md5>::new_from_slice(key).ok()?),
             "sha1" => Hmacker::Sha1(hmac::Hmac::<Sha1>::new_from_slice(key).ok()?),
             "sha256" => Hmacker::Sha256(hmac::Hmac::<Sha256>::new_from_slice(key).ok()?),
             "sha384" => Hmacker::Sha384(hmac::Hmac::<Sha384>::new_from_slice(key).ok()?),
             "sha512" => Hmacker::Sha512(hmac::Hmac::<Sha512>::new_from_slice(key).ok()?),
-            "md5" => Hmacker::Md5(hmac::Hmac::<Md5>::new_from_slice(key).ok()?),
+            "sha3-224" | "sha3_224" => Hmacker::Sha3_224(hmac::Hmac::<Sha3_224>::new_from_slice(key).ok()?),
+            "sha3-256" | "sha3_256" => Hmacker::Sha3_256(hmac::Hmac::<Sha3_256>::new_from_slice(key).ok()?),
+            "sha3-384" | "sha3_384" => Hmacker::Sha3_384(hmac::Hmac::<Sha3_384>::new_from_slice(key).ok()?),
+            "sha3-512" | "sha3_512" => Hmacker::Sha3_512(hmac::Hmac::<Sha3_512>::new_from_slice(key).ok()?),
+            "ripemd160" => Hmacker::Ripemd160(hmac::Hmac::<Ripemd160>::new_from_slice(key).ok()?),
             _ => return None,
         })
     }
     fn update(&mut self, data: &[u8]) {
         match self {
+            Hmacker::Md4(h) => h.update(data),
+            Hmacker::Md5(h) => h.update(data),
             Hmacker::Sha1(h) => h.update(data),
             Hmacker::Sha256(h) => h.update(data),
             Hmacker::Sha384(h) => h.update(data),
             Hmacker::Sha512(h) => h.update(data),
-            Hmacker::Md5(h) => h.update(data),
+            Hmacker::Sha3_224(h) => h.update(data),
+            Hmacker::Sha3_256(h) => h.update(data),
+            Hmacker::Sha3_384(h) => h.update(data),
+            Hmacker::Sha3_512(h) => h.update(data),
+            Hmacker::Ripemd160(h) => h.update(data),
         }
     }
     fn finalize(self) -> Vec<u8> {
         match self {
+            Hmacker::Md4(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Md5(h) => h.finalize().into_bytes().to_vec(),
             Hmacker::Sha1(h) => h.finalize().into_bytes().to_vec(),
             Hmacker::Sha256(h) => h.finalize().into_bytes().to_vec(),
             Hmacker::Sha384(h) => h.finalize().into_bytes().to_vec(),
             Hmacker::Sha512(h) => h.finalize().into_bytes().to_vec(),
-            Hmacker::Md5(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Sha3_224(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Sha3_256(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Sha3_384(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Sha3_512(h) => h.finalize().into_bytes().to_vec(),
+            Hmacker::Ripemd160(h) => h.finalize().into_bytes().to_vec(),
         }
     }
 }

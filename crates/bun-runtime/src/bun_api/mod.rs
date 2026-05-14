@@ -2036,6 +2036,7 @@ const BUN_HELPERS: &str = r##"
         if (key instanceof ArrayBuffer) key = Buffer.from(new Uint8Array(key));
         else if (ArrayBuffer.isView(key) && !(key instanceof Buffer)) key = Buffer.from(new Uint8Array(key.buffer, key.byteOffset, key.byteLength));
       }
+      this._key = key;
       try {
         this._h = (key !== undefined && key !== null) ? c.createHmac(this.algorithm, key) : c.createHash(this.algorithm);
       } catch (e) {
@@ -2048,7 +2049,7 @@ const BUN_HELPERS: &str = r##"
       this._done = false;
     }
     update(input, encoding) {
-      if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to update");
+      if (this._done) throw new Error((this._displayName || this.algorithm) + " hasher already digested, create a new instance to update");
       if (input === undefined || input === null) throw new TypeError("CryptoHasher.update: input required");
       if (input instanceof Blob) input = new Uint8Array(input._bytes || []);
       if (input && typeof input === "object" && !ArrayBuffer.isView(input) && !(input instanceof ArrayBuffer) && !(input instanceof Blob) && typeof input.text === "function" && typeof input.bytes === "function" && typeof input.exists === "function") {
@@ -2058,7 +2059,7 @@ const BUN_HELPERS: &str = r##"
       return this;
     }
     digest(encoding) {
-      if (this._done) throw new Error(this.algorithm + " hasher already digested, create a new instance to digest again");
+      if (this._done) throw new Error((this._displayName || this.algorithm) + " hasher already digested, create a new instance to digest again");
       this._done = true;
       const r = this._h.digest(encoding === "buffer" || encoding === undefined ? undefined : encoding);
       return encoding === undefined || encoding === "buffer" ? r : String(r);
@@ -2066,6 +2067,7 @@ const BUN_HELPERS: &str = r##"
     copy() {
       const n = Object.create(CryptoHasher.prototype);
       n.algorithm = this.algorithm;
+      n._displayName = this._displayName;
       const c = require("node:crypto");
       n._h = c.createHash(this.algorithm); // approximation: cannot deep-copy crypto state
       n._done = false;
@@ -2083,11 +2085,12 @@ const BUN_HELPERS: &str = r##"
     }
   };
   function _makeStaticHasher(algo, blocklen) {
+    const displayName = algo.toUpperCase().replace("-", "");
     const klass = class extends Bun.CryptoHasher {
-      constructor() { super(algo); }
+      constructor() { super(algo); this._displayName = displayName; }
       static hash(input, encoding) { return Bun.CryptoHasher.hash(algo, input, encoding); }
     };
-    Object.defineProperty(klass, "name", { value: algo.toUpperCase().replace("-", "") });
+    Object.defineProperty(klass, "name", { value: displayName });
     klass.byteLength = blocklen;
     return klass;
   }
