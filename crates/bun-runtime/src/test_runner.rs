@@ -909,7 +909,7 @@ const GLOBALS: &str = r#"
       for (const [name, fn] of Object.entries(g.__bun_custom_matchers)) {
         if (obj[name] !== undefined) continue;
         obj[name] = function (...args) {
-          const r = fn.call({
+          const ctx = {
             isNot: not,
             promise: "",
             utils: {
@@ -929,18 +929,26 @@ const GLOBALS: &str = r#"
               ensureNumbers: () => {},
             },
             equals: (a, b) => deepEq(a, b),
-          }, received, ...args);
-          if (r === null || typeof r !== "object" || typeof r.pass !== "boolean") {
-            throw new Error("Unexpected return from matcher function `" + name + "`.\nMatcher functions should return an object in the following format:\n  {message?: string | function, pass: boolean}\n'" + (r === undefined ? "undefined" : JSON.stringify(r)) + "' was returned");
+          };
+          const r = fn.call(ctx, received, ...args);
+          function settle(r) {
+            if (r === null || typeof r !== "object" || typeof r.pass !== "boolean") {
+              throw new Error("Unexpected return from matcher function `" + name + "`.\nMatcher functions should return an object in the following format:\n  {message?: string | function, pass: boolean}\n'" + (r === undefined ? "undefined" : JSON.stringify(r)) + "' was returned");
+            }
+            const pass = !!r.pass;
+            if (not ? pass : !pass) {
+              let msg;
+              if (typeof r.message === "function") msg = r.message();
+              else if (r.message !== undefined && r.message !== null) msg = String(r.message);
+              else msg = "No message was specified for this matcher.";
+              throw new Error(msg);
+            }
           }
-          const pass = !!r.pass;
-          if (not ? pass : !pass) {
-            let msg;
-            if (typeof r.message === "function") msg = r.message();
-            else if (r.message !== undefined && r.message !== null) msg = String(r.message);
-            else msg = "No message was specified for this matcher.";
-            throw new Error(msg);
+          // If matcher returned a Promise (async matcher), pipe through.
+          if (r && typeof r.then === "function") {
+            return r.then(settle);
           }
+          return settle(r);
         };
       }
     }
