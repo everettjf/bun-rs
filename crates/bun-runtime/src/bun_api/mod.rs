@@ -2919,7 +2919,10 @@ const BUN_HELPERS: &str = r##"
       return expandMerge(parsed);
     },
     stringify(v, _opts) {
+      if (v === undefined) return undefined;
+      if (v === null) return "null";
       const json = JSON.stringify(v);
+      if (json === undefined) return undefined;
       let out = Bun.__rust_yaml_stringify(json);
       // serde_yaml emits a trailing newline; Bun's stringify does not.
       if (typeof out === "string" && out.endsWith("\n")) out = out.slice(0, -1);
