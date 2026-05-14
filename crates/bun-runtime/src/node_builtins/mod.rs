@@ -445,17 +445,24 @@ fn build_dns_promises_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
 
 fn build_vm_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
     ctx.eval(
-        r#"({
+        r#"(() => { const m = {
             __esModule: true,
-            // Use JSC's eval / Function constructor for the sandbox features.
-            runInNewContext(code, _ctx, _opts) {
-                return Function("return (" + String(code) + ")")();
+            runInNewContext(code, ctx, _opts) {
+                // Build a function with the context object's keys as params
+                // so the code can read them; run code as a statement body.
+                const c = ctx || {};
+                const keys = Object.keys(c);
+                const values = keys.map(k => c[k]);
+                return new Function(...keys, String(code))(...values);
             },
             runInThisContext(code, _opts) {
-                return Function("return (" + String(code) + ")")();
+                return new Function(String(code))();
             },
-            runInContext(code, _ctx, _opts) {
-                return Function("return (" + String(code) + ")")();
+            runInContext(code, ctx, _opts) {
+                const c = ctx || {};
+                const keys = Object.keys(c);
+                const values = keys.map(k => c[k]);
+                return new Function(...keys, String(code))(...values);
             },
             createContext(obj) { return obj || {}; },
             isContext: (_x) => false,
@@ -464,13 +471,17 @@ fn build_vm_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             },
             Script: class Script {
                 constructor(code, _opts) { this._code = String(code); }
-                runInThisContext() { return Function("return (" + this._code + ")")(); }
-                runInNewContext(_ctx) { return this.runInThisContext(); }
-                runInContext(_ctx) { return this.runInThisContext(); }
+                runInThisContext() { return new Function(this._code)(); }
+                runInNewContext(ctx) {
+                    const c = ctx || {};
+                    const keys = Object.keys(c);
+                    return new Function(...keys, this._code)(...keys.map(k => c[k]));
+                }
+                runInContext(ctx) { return this.runInNewContext(ctx); }
                 createCachedData() { return new Uint8Array(0); }
             },
             constants: {},
-        })"#,
+        }; m.default = m; return m; })()"#,
         Some("[node:vm]"),
     )
     .unwrap()

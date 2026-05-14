@@ -196,7 +196,7 @@ fn rewrite_static(source: &str) -> Result<ModuleAnalysis, RewriteError> {
                         match s {
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(ds) => {
                                 emit.synth(&format!(
-                                    "const {} = ({local} && {local}.__esModule) ? {local}.default : {local};",
+                                    "const {} = ({local} && {local}.__esModule) ? ({local}.default !== undefined ? {local}.default : {local}) : {local};",
                                     binding_name(&ds.local)
                                 ));
                             }
