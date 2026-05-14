@@ -64,7 +64,9 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
     let rt = crate::Runtime::new(vec![crate::bun_exe_path(), "test".to_string()]);
     install_globals(&rt.ctx);
-    // Emit Bun-style header on stdout: "bun test <version>".
+    // Bun puts "bun test <version>" on stdout (some tests grep for it),
+    // but test result lines (✓/✗) go to stderr (above) so user console.log
+    // output stays clean.
     println!(
         "bun test {} ({})",
         env!("CARGO_PKG_VERSION"),
@@ -164,7 +166,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                 pathAfterAlls.delete(k);
                                 for (let j = hooks.length - 1; j >= 0; j--) {
                                     try { await runHook(hooks[j]); } catch (e) {
-                                        console.log("  ✗ afterAll threw: " + (e && e.message ? e.message : e));
+                                        console.error("  ✗ afterAll threw: " + (e && e.message ? e.message : e));
                                     }
                                 }
                             }
@@ -189,7 +191,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                     async function runHooks(hooks, label) {
                         for (const h of hooks || []) {
                             try { await runHook(h); } catch (e) {
-                                console.log("  ✗ " + label + " threw: " + (e && e.message ? e.message : e));
+                                console.error("  ✗ " + label + " threw: " + (e && e.message ? e.message : e));
                             }
                         }
                     }
@@ -199,7 +201,8 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                         // test was inside that we've now left.
                         await fireExitedAfterAlls(t.path);
                         if (t.skip) {
-                            console.log("  - " + fullName + " (skipped)");
+                            // Suppress skipped-test names from stdout — Bun's
+                            // reporter folds these into the summary.
                             skipped++;
                             return;
                         }
@@ -208,7 +211,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             if (typeof h === "function" && !ranBeforeAll.has(h)) {
                                 ranBeforeAll.add(h);
                                 try { await runHook(h); } catch (e) {
-                                    console.log("  ✗ beforeAll threw: " + (e && e.message ? e.message : e));
+                                    console.error("  ✗ beforeAll threw: " + (e && e.message ? e.message : e));
                                 }
                             }
                         }
@@ -277,7 +280,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                     for (const h of finallyHooksF) {
                                         try { await runHook(h); } catch {}
                                     }
-                                    console.log("  ✓ " + fullName + " (failing, threw as expected)");
+                                    console.error("  ✓ " + fullName + " (failing, threw as expected)");
                                     pass++;
                                     return;
                                 }
@@ -305,7 +308,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             for (const h of finallyHooks) {
                                 try { await runHook(h); } catch {}
                             }
-                            console.log("  ✓ " + fullName);
+                            console.error("  ✓ " + fullName);
                             pass++;
                         } catch (e) {
                             const msg = e && e.message ? e.message : String(e);
