@@ -3052,10 +3052,37 @@ const BUN_HELPERS: &str = r##"
   // Stub: tests of the bundler aren't our priority, but a permissive
   // implementation that returns success keeps test files from crashing.
   Bun.build = async function (opts) {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const outputs = [];
+    const logs = [];
+    const entrypoints = (opts && opts.entrypoints) || [];
+    for (const ep of entrypoints) {
+      let content;
+      try { content = fs.readFileSync(ep, "utf-8"); }
+      catch (e) { logs.push({ level: "error", message: String(e), position: null }); continue; }
+      // Pass-through "build" — best effort.
+      const u8 = new TextEncoder().encode(content);
+      const ext = (ep.match(/\.([^.]+)$/) || [, "txt"])[1];
+      const ctype = ({ js: "application/javascript", ts: "application/javascript", css: "text/css", json: "application/json", html: "text/html" })[ext] || "text/plain";
+      const out = {
+        path: ep,
+        kind: "entry-point",
+        loader: ext,
+        hash: 0,
+        size: u8.byteLength,
+        type: ctype,
+        async text() { return content; },
+        async arrayBuffer() { return u8.buffer.slice(0); },
+        async bytes() { return u8; },
+        async json() { try { return JSON.parse(content); } catch { return null; } },
+      };
+      outputs.push(out);
+    }
     return {
-      success: true,
-      outputs: [],
-      logs: [],
+      success: logs.length === 0,
+      outputs,
+      logs,
     };
   };
 

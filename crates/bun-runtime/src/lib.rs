@@ -203,13 +203,31 @@ fn run() -> Result<(), RuntimeError> {
             let mut all_argv = vec![bun_exe_path(), "[inline]".to_string()];
             all_argv.extend(script_args);
             let rt = Runtime::new(all_argv);
-            let result = rt.eval_string(&code, "[inline]");
+            // Wrap in async IIFE so top-level `await` works in `-e` code.
+            // Store any rejection on globalThis so we can pick it up after drain.
+            let wrapped = format!(
+                "(async function () {{ try {{ {} }} catch (e) {{ globalThis.__bun_e_err = e; throw e; }} }})().catch(e => {{ globalThis.__bun_e_err = e; }})",
+                code
+            );
+            let result = rt.eval_string(&wrapped, "[inline]");
             match result {
                 Ok(v) => {
                     if print_result && !v.is_undefined() {
                         println!("{}", v.to_string());
                     }
                     rt.drain();
+                    // Check for any captured rejection.
+                    let err_check = rt.ctx.eval(
+                        "globalThis.__bun_e_err",
+                        Some("[inline-err-check]"),
+                    );
+                    if let Ok(v) = err_check {
+                        if !v.is_undefined() && !v.is_null() {
+                            let msg = v.to_string();
+                            let _ = rt.ctx.eval("delete globalThis.__bun_e_err", Some("[inline-err-cleanup]"));
+                            return Err(RuntimeError::Throw(msg));
+                        }
+                    }
                     Ok(())
                 }
                 Err(exc) => Err(RuntimeError::Throw(format_exception(&exc))),
