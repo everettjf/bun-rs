@@ -3,6 +3,70 @@
 All notable changes to bun-rs are documented here. Versioning follows
 [SemVer](https://semver.org/) (with the customary "anything goes pre-1.0" caveat).
 
+## [1.1.0] – 2026-05-14
+
+Big push on Bun-suite compatibility — file-level pass rate climbed from
+21.8 % to **38.9 % (159 / 409)** of Bun's `test/js/bun` corpus, ~6.3 K
+individual cases green. ~120 feature batches landed.
+
+### Added
+
+- **Test runner**: `jest.useFakeTimers` / `jest.setSystemTime` actually
+  mock `Date.now` + the runtime's timer queue (sinon-FakeTimers
+  compatible); `vi.*` aliases share the same hoisted factory.
+- **`Bun.spawn`** drains async stdout as a real stream (was a sync-only
+  stub before).
+- **`Bun.$`** awaited result has both Promise-returning *and* sync
+  `.text()` / `.json()` / `.blob()` / `.arrayBuffer()`; `$.throws(true)`
+  emits a real `ShellError`; `${{raw}}` interpolation.
+- **`-e` / `-p`** wraps inline code in an async IIFE so top-level
+  `await` works; `-p` captures the awaited expression and prints the
+  resolved value (not the wrapper Promise).
+- `Object.setPrototypeOf(globalThis, p)` shim installs proto props as
+  globals (Bun parity).
+- `process.config` / `versions` / `release` / `features`; stubs for
+  `node:cluster` / `domain` / `async_hooks` / `repl` / `sea`; `net`
+  helpers (`getDefaultAutoSelectFamily`, `BlockList`, `SocketAddress`).
+- Test runner output now matches Bun: `bun test <version>` header on
+  stdout, `✓`/`✗` on stderr; skipped tests suppressed; `Ran N tests
+  across M files.` footer.
+- `Bun.dns` cache stats reflect prefetch + fetch hits via a
+  `__onFetch` hook.
+- `expect.toMatchSnapshot` creates `__snapshots__/<file>.snap` on first
+  call (no diffing yet — see Known Limitations in capabilities.md).
+- ~120 individual `Bun.*` / `node:*` / matcher / global behaviours
+  (`Bun.stripANSI` CJK width, `Bun.wrapAnsi`, `Bun.JSONL.parseChunk`,
+  `Bun.CSRF`, `Bun.cron`, `Bun.YAML`, `Bun.TOML`, `Bun.markdown`,
+  `Bun.Glob`, `Bun.Cookie` / `Bun.CookieMap`, `Bun.Transpiler`,
+  `Bun.semver`, `crypto` algos including blake2 / sha3 / md4 /
+  ripemd160, …). See `docs/capabilities.md` for the full table.
+
+### Fixed
+
+- `-p <expr>` no longer prints `[object Promise]`; the async-IIFE
+  wrapper's resolved value is now captured and printed.
+- Source-map remapping uses the **actual** wrapper-prefix line count
+  per module (was hardcoded at 4 before `var __filename` / `__dirname`
+  + `local_require` predecls landed, which broke `error_stack_maps_to_source_lines`).
+- `Request#formData` `ERR_INVALID_THIS` now reports the received value's
+  type and throws synchronously (matches Bun), instead of rejecting a
+  Promise with a generic message.
+- Stack frames stop emitting `<bunrs-internal>` for legitimate user
+  lines now that prefix calculation is correct.
+
+### Docs
+
+- README disclaimer rewritten to be unambiguous about the experimental
+  / hobby / "official Bun already rewrote in Rust" framing.
+- README "Known limitations" expanded into a three-bucket "What's not
+  supported (yet)" section (throws-or-stub / behaves-but-lies /
+  deliberate non-goals) with the 38.9 % headline.
+- `docs/capabilities.md` rewritten end-to-end: 11 sections covering
+  language, test runner, `Bun.*`, `node:*`, web globals, CLI, platforms,
+  deliberate non-goals, and the biggest test-unblocking levers.
+- `docs/tutorial.md` rewritten as 12 copy-pasteable steps from
+  `bunrs -p` to the test runner with fake timers.
+
 ## [1.0.3] – 2026-05-12
 
 Unit-test coverage push — went from ~37 lib tests to 96. Pure

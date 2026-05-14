@@ -163,7 +163,7 @@ checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "bun-bundler"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bun-loader",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "bun-cli"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bun-runtime",
@@ -180,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "bun-install"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "bun-jsc"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "bun-jsc-sys",
  "thiserror",
@@ -200,14 +200,14 @@ dependencies = [
 
 [[package]]
 name = "bun-jsc-sys"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "pkg-config",
 ]
 
 [[package]]
 name = "bun-loader"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "bun-transpile",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "bun-runtime"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "blake2",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "bun-transpile"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "oxc",

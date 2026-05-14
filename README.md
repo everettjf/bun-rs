@@ -36,7 +36,7 @@ See:
 
 - [`docs/tutorial.md`](docs/tutorial.md) — 30-minute walk-through
 - [`docs/guide.md`](docs/guide.md) — full reference: what works, what doesn't
-- [`docs/roadmap.md`](docs/roadmap.md) — what's coming in 0.2 / 0.3 / 1.0
+- [`docs/roadmap.md`](docs/roadmap.md) — what's planned next
 - [`docs/build.md`](docs/build.md) — build prereqs for macOS / Linux
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 
