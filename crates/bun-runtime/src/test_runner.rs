@@ -558,6 +558,51 @@ const GLOBALS: &str = r#"
   g.afterEach = (fn) => curr().afterEach.push(fn);
 
   // ── expect ──
+  function strictEq(a, b, seen) {
+    if (Object.is(a, b)) return true;
+    if (a === null || b === null) return a === b;
+    if (typeof a !== typeof b) return false;
+    if (typeof a !== "object") return Object.is(a, b);
+    seen = seen || new WeakMap();
+    if (seen.has(a)) return seen.get(a) === b;
+    seen.set(a, b);
+    if (Array.isArray(a) !== Array.isArray(b)) return false;
+    if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+    if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+    if (a instanceof RegExp && b instanceof RegExp) return a.toString() === b.toString();
+    if (a instanceof Map && b instanceof Map) {
+      if (a.size !== b.size) return false;
+      for (const [k, v] of a) { if (!b.has(k) || !strictEq(v, b.get(k), seen)) return false; }
+      return true;
+    }
+    if (a instanceof Set && b instanceof Set) {
+      if (a.size !== b.size) return false;
+      for (const va of a) if (!b.has(va)) return false;
+      return true;
+    }
+    if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
+      if (a.byteLength !== b.byteLength) return false;
+      for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+    if (Array.isArray(a)) {
+      if (a.length !== b.length) return false;
+      // Sparse-aware: a hole !== undefined.
+      for (let i = 0; i < a.length; i++) {
+        const hasA = i in a, hasB = i in b;
+        if (hasA !== hasB) return false;
+        if (hasA && !strictEq(a[i], b[i], seen)) return false;
+      }
+      return true;
+    }
+    const ak = Object.keys(a), bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    for (const k of ak) {
+      if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+      if (!strictEq(a[k], b[k], seen)) return false;
+    }
+    return true;
+  }
   function deepEq(a, b, seen) {
     if (Object.is(a, b)) return true;
     if (a === null || b === null) return false;
@@ -645,7 +690,7 @@ const GLOBALS: &str = r#"
     const obj = {
       toBe(v) { check(Object.is(received, v), v, "toBe"); },
       toEqual(v) { check(deepEq(received, v), v, "toEqual"); },
-      toStrictEqual(v) { check(deepEq(received, v), v, "toStrictEqual"); },
+      toStrictEqual(v) { check(strictEq(received, v), v, "toStrictEqual"); },
       toBeTruthy() { check(!!received, undefined, "toBeTruthy"); },
       toBeFalsy() { check(!received, undefined, "toBeFalsy"); },
       toBeNull() { check(received === null, undefined, "toBeNull"); },
