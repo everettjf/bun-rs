@@ -94,11 +94,11 @@ const POLYFILL: &str = r#"
         }
         return buf;
       }
-      if (encoding === "base64") {
-        // atob is part of the JSC context (added in 12.0+); fall back to
-        // a manual decode if not. JSC bare context lacks atob, so do it.
+      if (encoding === "base64" || encoding === "base64url") {
         const lut = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        const clean = s.replace(/[^A-Za-z0-9+/]/g, "");
+        // base64url uses - and _ instead of + and /; allow both.
+        let normalized = s.replace(/-/g, "+").replace(/_/g, "/");
+        const clean = normalized.replace(/[^A-Za-z0-9+/]/g, "");
         const pad = (clean.endsWith("==")) ? 2 : (clean.endsWith("=") ? 1 : 0);
         const out = new Buffer(((clean.length * 3) >> 2) - pad);
         let p = 0;
@@ -224,12 +224,15 @@ const POLYFILL: &str = r#"
         return s;
       }
       if (encoding === "utf16le" || encoding === "ucs2" || encoding === "ucs-2") {
-        // Interpret bytes as little-endian UTF-16 code units.
         let s = "";
         for (let i = 0; i + 1 < view.length; i += 2) {
           s += String.fromCharCode(view[i] | (view[i + 1] << 8));
         }
         return s;
+      }
+      if (encoding === "base64url") {
+        const b64 = this.toString("base64", start, end);
+        return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
       }
       throw new TypeError("Unsupported encoding: " + encoding);
     }

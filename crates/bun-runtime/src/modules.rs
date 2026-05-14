@@ -666,21 +666,40 @@ fn build_import_meta<'ctx>(ctx: &'ctx Context, abs: &Path) -> Value<'ctx> {
 /// FILE load even though specific tests may fail per-API.
 fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>> {
     let src = match spec {
-        "uuid" => Some(r#"({
-            __esModule: true,
-            v1: () => { const u = crypto.randomUUID(); return u; },
-            v3: () => crypto.randomUUID(),
-            v4: () => crypto.randomUUID(),
-            v5: (name, ns) => Bun.randomUUIDv5 ? Bun.randomUUIDv5(String(name), String(ns)) : crypto.randomUUID(),
-            v6: () => crypto.randomUUID(),
-            v7: () => Bun.randomUUIDv7 ? Bun.randomUUIDv7() : crypto.randomUUID(),
-            NIL: "00000000-0000-0000-0000-000000000000",
-            parse: (u) => new Uint8Array(16),
-            stringify: (b) => "00000000-0000-0000-0000-000000000000",
-            validate: (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s)),
-            version: (s) => parseInt(String(s).charAt(14), 16),
-            default: undefined,
-        })"#),
+        "uuid" => Some(r#"(() => {
+            const DNS = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+            const URL_NS = "6ba7b811-9dad-11d1-80b4-00c04fd430c8";
+            const OID = "6ba7b812-9dad-11d1-80b4-00c04fd430c8";
+            const X500 = "6ba7b814-9dad-11d1-80b4-00c04fd430c8";
+            const v5 = (name, ns) => Bun.randomUUIDv5 ? Bun.randomUUIDv5(String(name), String(ns)) : crypto.randomUUID();
+            v5.DNS = DNS; v5.URL = URL_NS; v5.OID = OID; v5.X500 = X500;
+            const v3 = (n, ns) => v5(n, ns);
+            v3.DNS = DNS; v3.URL = URL_NS;
+            return {
+                __esModule: true,
+                v1: () => crypto.randomUUID(),
+                v3, v5,
+                v4: () => crypto.randomUUID(),
+                v6: () => crypto.randomUUID(),
+                v7: () => Bun.randomUUIDv7 ? Bun.randomUUIDv7() : crypto.randomUUID(),
+                NIL: "00000000-0000-0000-0000-000000000000",
+                MAX: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                parse: (u) => {
+                    const hex = String(u).replace(/-/g, "");
+                    const buf = new Uint8Array(16);
+                    for (let i = 0; i < 16; i++) buf[i] = parseInt(hex.substr(i * 2, 2), 16);
+                    return buf;
+                },
+                stringify: (b) => {
+                    const h = [];
+                    for (let i = 0; i < 16; i++) { const x = b[i].toString(16); h.push(x.length === 1 ? "0" + x : x); }
+                    const s = h.join("");
+                    return s.slice(0, 8) + "-" + s.slice(8, 12) + "-" + s.slice(12, 16) + "-" + s.slice(16, 20) + "-" + s.slice(20, 32);
+                },
+                validate: (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s)),
+                version: (s) => parseInt(String(s).charAt(14), 16),
+            };
+        })()"#),
         "strip-ansi" => Some(r#"({
             __esModule: true,
             default: (s) => globalThis.Bun ? globalThis.Bun.stripANSI(s) : String(s).replace(/\[[0-9;]*[a-zA-Z]/g, ""),

@@ -794,14 +794,23 @@ const BUN_HELPERS: &str = r##"
       oid:  "6ba7b812-9dad-11d1-80b4-00c04fd430c8",
       x500: "6ba7b814-9dad-11d1-80b4-00c04fd430c8",
     };
-    let nsStr = String(namespace || "");
-    const lowered = nsStr.toLowerCase();
-    if (NS_PREDEFINED[lowered]) nsStr = NS_PREDEFINED[lowered];
-    // Parse namespace UUID → 16-byte buffer.
-    const nsHex = nsStr.replace(/-/g, "");
-    if (nsHex.length !== 32) throw new TypeError("namespace must be a UUID");
-    const nsBytes = Buffer.alloc(16);
-    for (let i = 0; i < 16; i++) nsBytes[i] = parseInt(nsHex.substr(i * 2, 2), 16);
+    let nsBytes;
+    if (namespace instanceof Uint8Array) {
+      if (namespace.length !== 16) throw new TypeError("namespace must be a 16-byte buffer");
+      nsBytes = Buffer.from(namespace);
+    } else if (namespace instanceof ArrayBuffer) {
+      if (namespace.byteLength !== 16) throw new TypeError("namespace must be a 16-byte buffer");
+      nsBytes = Buffer.from(new Uint8Array(namespace));
+    } else {
+      let nsStr = String(namespace || "");
+      const lowered = nsStr.toLowerCase();
+      if (NS_PREDEFINED[lowered]) nsStr = NS_PREDEFINED[lowered];
+      const nsHex = nsStr.replace(/-/g, "");
+      if (nsHex.length !== 32) throw new TypeError("namespace must be a UUID");
+      if (!/^[0-9a-fA-F]{32}$/.test(nsHex)) throw new TypeError("namespace must be a UUID");
+      nsBytes = Buffer.alloc(16);
+      for (let i = 0; i < 16; i++) nsBytes[i] = parseInt(nsHex.substr(i * 2, 2), 16);
+    }
     // Coerce name to bytes.
     let nameBytes;
     if (typeof name === "string") nameBytes = Buffer.from(name, "utf8");
