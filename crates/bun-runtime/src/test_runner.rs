@@ -844,19 +844,25 @@ const GLOBALS: &str = r#"
       toBeNullish() { check(received === null || received === undefined, undefined, "toBeNullish"); },
       toBeNil() { check(received === null || received === undefined, undefined, "toBeNil"); },
       toBeNonEmptyString() { check(typeof received === "string" && received.length > 0, undefined, "toBeNonEmptyString"); },
-      toHaveBeenCalled() {
-        check(received && received.mock && received.mock.calls && received.mock.calls.length > 0, undefined, "toHaveBeenCalled");
+      toHaveBeenCalled(...extra) {
+        if (extra.length > 0) throw new TypeError("toHaveBeenCalled takes no arguments");
+        if (!received || !received.mock) throw new TypeError("toHaveBeenCalled: received must be a mock");
+        check(received.mock.calls && received.mock.calls.length > 0, undefined, "toHaveBeenCalled");
       },
       toHaveBeenCalledTimes(n) {
-        check(received && received.mock && received.mock.calls && received.mock.calls.length === n, n, "toHaveBeenCalledTimes");
+        if (typeof n !== "number") throw new TypeError("toHaveBeenCalledTimes requires a number argument");
+        if (!received || !received.mock) throw new TypeError("toHaveBeenCalledTimes: received must be a mock");
+        check(received.mock.calls && received.mock.calls.length === n, n, "toHaveBeenCalledTimes");
       },
       toHaveBeenCalledWith(...args) {
-        const calls = (received && received.mock && received.mock.calls) || [];
+        if (!received || !received.mock) throw new TypeError("toHaveBeenCalledWith: received must be a mock");
+        const calls = received.mock.calls || [];
         const ok = calls.some(c => c.length === args.length && c.every((v, i) => deepEq(v, args[i])));
         check(ok, args, "toHaveBeenCalledWith");
       },
       toHaveBeenLastCalledWith(...args) {
-        const calls = (received && received.mock && received.mock.calls) || [];
+        if (!received || !received.mock) throw new TypeError("toHaveBeenLastCalledWith: received must be a mock");
+        const calls = received.mock.calls || [];
         const last = calls[calls.length - 1] || [];
         const ok = last.length === args.length && last.every((v, i) => deepEq(v, args[i]));
         check(ok, args, "toHaveBeenLastCalledWith");
