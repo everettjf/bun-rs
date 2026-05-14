@@ -2046,6 +2046,7 @@ const BUN_HELPERS: &str = r##"
           this._h = c.createHash("sha256"); // fallback
         } else throw e;
       }
+      this._updates = [];
       this._done = false;
     }
     update(input, encoding) {
@@ -2056,6 +2057,9 @@ const BUN_HELPERS: &str = r##"
         throw new TypeError("Bun.file in CryptoHasher is not supported yet");
       }
       this._h.update(input, encoding);
+      // Replay-on-copy: node:crypto Hash has no clone API. Snapshot inputs
+      // so copy() can rebuild equivalent state.
+      this._updates.push([input, encoding]);
       return this;
     }
     digest(encoding) {
@@ -2065,11 +2069,18 @@ const BUN_HELPERS: &str = r##"
       return encoding === undefined || encoding === "buffer" ? r : String(r);
     }
     copy() {
+      if (this._done) throw new Error((this._displayName || this.algorithm) + " hasher already digested, cannot copy");
       const n = Object.create(CryptoHasher.prototype);
       n.algorithm = this.algorithm;
       n._displayName = this._displayName;
+      n._key = this._key;
       const c = require("node:crypto");
-      n._h = c.createHash(this.algorithm); // approximation: cannot deep-copy crypto state
+      n._h = (this._key !== undefined && this._key !== null)
+        ? c.createHmac(this.algorithm, this._key)
+        : c.createHash(this.algorithm);
+      // Replay all updates to rebuild equivalent state.
+      n._updates = this._updates.slice();
+      for (const [inp, enc] of this._updates) n._h.update(inp, enc);
       n._done = false;
       return n;
     }
