@@ -2289,9 +2289,31 @@ const BUN_HELPERS: &str = r##"
   Bun.allocUnsafeSlow = (n) => new Uint8Array(n);
   Bun.gc = Bun.gc; // already defined
 
-  // ── Bun.cron (stub) ────────────────────────────────────────────────
-  Bun.cron = function (schedule, handler) {
-    if (arguments.length === 0) throw new TypeError("Bun.cron: schedule required");
+  // ── Bun.cron (stub) — signature: Bun.cron(path, schedule, title?) or
+  // (schedule, handler) (handler form for callback variant) ──────────
+  Bun.cron = function (a, b, c) {
+    if (arguments.length === 0) throw new TypeError("Bun.cron: required arguments missing");
+    // Detect (path, schedule, title?) shape — first arg is string path
+    // and second is string schedule.
+    if (typeof a === "string" && typeof b === "string") {
+      const path = a, schedule = b, title = c;
+      if (title !== undefined && typeof title !== "string") {
+        throw new TypeError("Bun.cron: title must be a string");
+      }
+      if (title !== undefined && !/^[A-Za-z0-9_-]+$/.test(title)) {
+        throw new TypeError("Bun.cron: title must be alphanumeric (letters, digits, _, -)");
+      }
+      // Validate schedule via croner.
+      try { Bun.__rust_cron_next(schedule, 0); }
+      catch (e) { throw new Error("Bun.cron: invalid cron expression: " + (e.message || e)); }
+      const id = (globalThis.__bun_cron_jobs_next_id = (globalThis.__bun_cron_jobs_next_id || 0) + 1);
+      globalThis.__bun_cron_jobs = globalThis.__bun_cron_jobs || new Map();
+      const job = { id, path, schedule, title: title || `cron-${id}`, stop: () => { globalThis.__bun_cron_jobs.delete(id); }, ref: () => job, unref: () => job };
+      globalThis.__bun_cron_jobs.set(job.title, job);
+      return job;
+    }
+    // Fallback: (schedule, handler).
+    const schedule = a, handler = b;
     if (typeof schedule !== "string") throw new TypeError("Bun.cron: schedule must be a string");
     const id = (globalThis.__bun_cron_jobs_next_id = (globalThis.__bun_cron_jobs_next_id || 0) + 1);
     globalThis.__bun_cron_jobs = globalThis.__bun_cron_jobs || new Map();
@@ -2299,7 +2321,10 @@ const BUN_HELPERS: &str = r##"
     globalThis.__bun_cron_jobs.set(id, job);
     return job;
   };
-  Bun.cron.remove = (id) => { if (globalThis.__bun_cron_jobs) globalThis.__bun_cron_jobs.delete(typeof id === "object" && id ? id.id : id); };
+  Bun.cron.remove = (title) => {
+    if (typeof title !== "string") throw new TypeError("Bun.cron.remove: title must be a string");
+    if (globalThis.__bun_cron_jobs) globalThis.__bun_cron_jobs.delete(title);
+  };
   Bun.cron.list = () => Array.from((globalThis.__bun_cron_jobs || new Map()).values());
   Bun.cron.parse = function (expr, from) {
     const fromMs = from ? (from instanceof Date ? from.getTime() : new Date(from).getTime()) : 0;
