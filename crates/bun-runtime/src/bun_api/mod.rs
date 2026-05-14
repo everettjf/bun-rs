@@ -1215,6 +1215,14 @@ const BUN_HELPERS: &str = r##"
     let cmd, args, options;
     if (Array.isArray(opts)) { cmd = opts[0]; args = opts.slice(1); options = {}; }
     else { cmd = opts.cmd[0]; args = opts.cmd.slice(1); options = opts; }
+    if (options && options.timeout !== undefined) {
+      const t = options.timeout;
+      if (typeof t === "number" && (t < 0 || !Number.isFinite(t) || t > Number.MAX_SAFE_INTEGER)) {
+        const err = new RangeError(`The value of "timeout" is out of range. It must be >= 0 and <= 9007199254740991. Received ${t}`);
+        err.code = "ERR_OUT_OF_RANGE";
+        throw err;
+      }
+    }
     const cp = require("node:child_process");
     const r = cp.spawnSync(cmd, args, options);
     function wrapStdio(buf) {

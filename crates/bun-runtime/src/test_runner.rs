@@ -912,7 +912,22 @@ const GLOBALS: &str = r#"
           const r = fn.call({
             isNot: not,
             promise: "",
-            utils: {},
+            utils: {
+              RECEIVED_COLOR: (s) => String(s),
+              EXPECTED_COLOR: (s) => String(s),
+              DIM_COLOR: (s) => String(s),
+              BOLD_WEIGHT: (s) => String(s),
+              INVERTED_COLOR: (s) => String(s),
+              matcherHint: (m, _r, _e) => m,
+              printReceived: (v) => String(v),
+              printExpected: (v) => String(v),
+              printWithType: (_l, v) => String(v),
+              stringify: (v) => { try { return JSON.stringify(v); } catch { return String(v); } },
+              ensureNoExpected: () => {},
+              ensureActualIsNumber: () => {},
+              ensureExpectedIsNumber: () => {},
+              ensureNumbers: () => {},
+            },
             equals: (a, b) => deepEq(a, b),
           }, received, ...args);
           if (r === null || typeof r !== "object" || typeof r.pass !== "boolean") {
@@ -920,7 +935,10 @@ const GLOBALS: &str = r#"
           }
           const pass = !!r.pass;
           if (not ? pass : !pass) {
-            const msg = (typeof r.message === "function") ? r.message() : String(r.message || `${name} matcher failed`);
+            let msg;
+            if (typeof r.message === "function") msg = r.message();
+            else if (r.message !== undefined && r.message !== null) msg = String(r.message);
+            else msg = "No message was specified for this matcher.";
             throw new Error(msg);
           }
         };
