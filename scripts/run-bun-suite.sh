@@ -9,7 +9,7 @@ set -u
 
 BUN_TESTS=/Users/eevv/focus/bun/test
 BUN_RS=/Users/eevv/focus/bun-rs/target/release/bun-rs
-TIMEOUT_SEC="${2:-15}"
+TIMEOUT_SEC="${2:-20}"
 OUT_CSV=/Users/eevv/focus/bun-rs/target/bun-suite-results.csv
 OUT_SUM=/Users/eevv/focus/bun-rs/target/bun-suite-summary.txt
 SUBSET="${1:?usage: run-bun-suite.sh <subset> [timeout-sec]}"

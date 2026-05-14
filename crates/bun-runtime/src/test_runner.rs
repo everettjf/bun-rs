@@ -1094,7 +1094,19 @@ const GLOBALS: &str = r#"
     if (!matchers || typeof matchers !== "object") {
       throw new Error("expect.extend: matchers must be an object");
     }
-    for (const [name, fn] of Object.entries(matchers)) {
+    // Walk the prototype chain so { extends Bar } / Object.create(Bar)
+    // exposed matchers register too.
+    const seen = new Set();
+    const entries = [];
+    for (let o = matchers; o && o !== Object.prototype; o = Object.getPrototypeOf(o)) {
+      for (const k of Object.getOwnPropertyNames(o)) {
+        if (k === "constructor") continue;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        entries.push([k, o[k]]);
+      }
+    }
+    for (const [name, fn] of entries) {
       if (typeof fn !== "function") {
         const typeStr = fn === null ? "null" : (Array.isArray(fn) ? "array" : typeof fn);
         throw new Error("expect.extend: `" + name + "` is not a valid matcher. Must be a function, is " + JSON.stringify(typeStr));
