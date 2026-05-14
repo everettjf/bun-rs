@@ -130,7 +130,11 @@ fn lower_dynamic_imports(source: &str) -> Result<String, RewriteError> {
                 src_end,
             } => {
                 let arg_text = &source[src_start as usize..src_end as usize];
-                let replacement = format!("__bun_require({arg_text}, __filename)");
+                // Dynamic import returns a namespace object — wrap CJS-style
+                // module.exports so `.default` and named exports both work.
+                let replacement = format!(
+                    "Promise.resolve(__bun_require({arg_text}, __filename)).then(__m => (__m && __m.__esModule) ? __m : Object.assign({{ __esModule: true, default: __m }}, (__m && typeof __m === \"object\" ? __m : null)))"
+                );
                 out.replace_range(start as usize..end as usize, &replacement);
             }
             Spot::ImportMeta { start, end } => {

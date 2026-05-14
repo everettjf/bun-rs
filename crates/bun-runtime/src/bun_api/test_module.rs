@@ -89,6 +89,13 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             // module. Async factories (returning a Promise) work too.
             // Resolves relative specs against the caller's source file.
             mock.module = (spec, factory) => {
+                // Validate args BEFORE doing any resolution — Bun's contract.
+                if (typeof spec !== "string") {
+                    throw new TypeError("mock(module, fn) requires a module name string");
+                }
+                if (typeof factory !== "function") {
+                    throw new TypeError("mock(module, fn) requires a function");
+                }
                 globalThis.__bun_mocked_modules = globalThis.__bun_mocked_modules || new Map();
                 let s = String(spec);
                 globalThis.__bun_mocked_modules.set(s, factory);

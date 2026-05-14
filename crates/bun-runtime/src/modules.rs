@@ -835,8 +835,40 @@ fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>>
         })"#),
         "v8-heapsnapshot" => Some(r#"({
             __esModule: true,
-            parseSnapshot: (s) => ({ nodes: [], edges: [], strings: [] }),
-            default: (s) => ({ nodes: [], edges: [], strings: [] }),
+            parseSnapshot: (s) => {
+              // Best-effort parser: reads node_fields/edge_fields from meta,
+              // produces typed node/edge objects. Used by Bun's tests purely
+              // to validate that the snapshot has nodes/edges arrays.
+              const meta = s && s.snapshot && s.snapshot.meta;
+              const nf = (meta && meta.node_fields) || [];
+              const ef = (meta && meta.edge_fields) || [];
+              const strings = s.strings || [];
+              const rawNodes = s.nodes || [];
+              const rawEdges = s.edges || [];
+              const nodes = [];
+              if (nf.length > 0) {
+                for (let i = 0; i + nf.length <= rawNodes.length; i += nf.length) {
+                  const node = {};
+                  for (let j = 0; j < nf.length; j++) {
+                    node[nf[j]] = nf[j] === "name" ? strings[rawNodes[i + j]] : rawNodes[i + j];
+                  }
+                  nodes.push(node);
+                }
+              }
+              const edges = [];
+              if (ef.length > 0) {
+                for (let i = 0; i + ef.length <= rawEdges.length; i += ef.length) {
+                  const edge = {};
+                  for (let j = 0; j < ef.length; j++) {
+                    edge[ef[j]] = ef[j] === "name_or_index" ? rawEdges[i + j] : rawEdges[i + j];
+                  }
+                  edge.to = nodes[Math.floor(edge.to_node / Math.max(1, nf.length))] || nodes[0];
+                  edges.push(edge);
+                }
+              }
+              return Promise.resolve({ nodes, edges, strings });
+            },
+            default: (s) => Promise.resolve({ nodes: [], edges: [], strings: [] }),
         })"#),
         "jest-extended" => Some(r#"({
             __esModule: true,

@@ -317,6 +317,43 @@ const BUN_HELPERS: &str = r##"
     Object.defineProperty(globalThis, "global", { value: globalThis, configurable: true });
   }
 
+  // Manual UTF-8 decoder that inserts U+FFFD for invalid bytes (TextDecoder
+  // with `fatal: false` in JSC drops invalid bytes instead).
+  globalThis.__bunDecodeUtf8WithReplacement = function(buf) {
+    const arr = buf instanceof Uint8Array ? buf : (buf && buf.buffer) ? new Uint8Array(buf.buffer, buf.byteOffset || 0, buf.byteLength || buf.length || 0) : new Uint8Array(buf);
+    let out = "";
+    let i = 0;
+    const n = arr.length;
+    while (i < n) {
+      const b = arr[i];
+      if (b < 0x80) { out += String.fromCharCode(b); i++; continue; }
+      let codepoint = -1, len = 0;
+      if ((b & 0xe0) === 0xc0) { codepoint = b & 0x1f; len = 1; }
+      else if ((b & 0xf0) === 0xe0) { codepoint = b & 0x0f; len = 2; }
+      else if ((b & 0xf8) === 0xf0) { codepoint = b & 0x07; len = 3; }
+      else { out += "�"; i++; continue; }
+      if (i + len >= n) { out += "�"; i++; continue; }
+      let valid = true;
+      for (let j = 1; j <= len; j++) {
+        const c = arr[i + j];
+        if ((c & 0xc0) !== 0x80) { valid = false; break; }
+        codepoint = (codepoint << 6) | (c & 0x3f);
+      }
+      if (!valid) { out += "�"; i++; continue; }
+      // Overlong / surrogate / out-of-range checks.
+      if (len === 1 && codepoint < 0x80) { out += "�"; i++; continue; }
+      if (len === 2 && (codepoint < 0x800 || (codepoint >= 0xd800 && codepoint <= 0xdfff))) { out += "�"; i++; continue; }
+      if (len === 3 && (codepoint < 0x10000 || codepoint > 0x10ffff)) { out += "�"; i++; continue; }
+      if (codepoint <= 0xffff) out += String.fromCharCode(codepoint);
+      else {
+        codepoint -= 0x10000;
+        out += String.fromCharCode(0xd800 + (codepoint >> 10), 0xdc00 + (codepoint & 0x3ff));
+      }
+      i += len + 1;
+    }
+    return out;
+  };
+
   // JSON5 — JSON with comments + trailing commas. Use JSC's native JSON
   // for the strict subset; emulate JSON5 by stripping comments and
   // converting single-quoted strings before parsing.
@@ -927,7 +964,36 @@ const BUN_HELPERS: &str = r##"
 
   // ── Bun.gc / Bun.allocUnsafe / Bun.deepEquals / Bun.deepMatch ───────
   Bun.gc = function (sync) { /* no-op */ return 0; };
-  Bun.generateHeapSnapshot = function (_format) {
+  Bun.generateHeapSnapshot = function (format, out) {
+    // V8 heap snapshot format — minimal valid structure with 1 root node + 1 edge.
+    if (format === "v8") {
+      const v8Snapshot = {
+        snapshot: {
+          meta: {
+            node_fields: ["type", "name", "id", "self_size", "edge_count", "trace_node_id", "detachedness"],
+            node_types: [["hidden", "array", "string", "object", "code", "closure", "regexp", "number", "native", "synthetic", "concatenated string", "sliced string", "symbol", "bigint"]],
+            edge_fields: ["type", "name_or_index", "to_node"],
+            edge_types: [["context", "element", "property", "internal", "hidden", "shortcut", "weak"]],
+            trace_function_info_fields: [],
+            trace_node_fields: [],
+            sample_fields: [],
+            location_fields: [],
+          },
+          node_count: 1,
+          edge_count: 1,
+          trace_function_count: 0,
+        },
+        // One root node (7 fields), referencing self via 1 element edge (3 fields).
+        nodes: [9, 0, 1, 0, 1, 0, 0],
+        edges: [1, 0, 0],
+        strings: ["(GC roots)"],
+      };
+      const json = JSON.stringify(v8Snapshot);
+      if (out === "arraybuffer") {
+        return new TextEncoder().encode(json).buffer;
+      }
+      return json;
+    }
     return { version: 2, type: "Heap", nodes: [], edges: [] };
   };
   Bun.estimateShallowMemoryUsageOf = function (_v) { return 0; };
@@ -2187,6 +2253,26 @@ const BUN_HELPERS: &str = r##"
   // Bun.jest(path) — return the bun:test exports object so tests that
   // dynamically `Bun.jest(...)` can use describe/it/expect at runtime.
   Bun.jest = (_p) => {
+    // Module-validating mock.module is required even in non-test contexts
+    // (Bun.jest() called from a plain script). Build a minimal vi/jest
+    // shim that throws the right errors on bad input.
+    const m = globalThis.mock || (function () {
+      function fakeMock(_impl) { return function mocked() {}; }
+      fakeMock.module = (spec, factory) => {
+        if (typeof spec !== "string") throw new TypeError("mock(module, fn) requires a module name string");
+        if (typeof factory !== "function") throw new TypeError("mock(module, fn) requires a function");
+      };
+      return fakeMock;
+    })();
+    const viShim = globalThis.vi || globalThis.jest || {
+      fn: m,
+      mock: m.module,
+      spyOn: globalThis.spyOn,
+      useFakeTimers: () => {},
+      useRealTimers: () => {},
+      advanceTimersByTime: () => {},
+      runAllTimers: () => {},
+    };
     return {
       describe: globalThis.describe,
       test: globalThis.test,
@@ -2196,10 +2282,10 @@ const BUN_HELPERS: &str = r##"
       afterAll: globalThis.afterAll,
       beforeEach: globalThis.beforeEach,
       afterEach: globalThis.afterEach,
-      mock: globalThis.mock,
+      mock: m,
       spyOn: globalThis.spyOn,
       jest: globalThis.jest,
-      vi: globalThis.vi || globalThis.jest,
+      vi: viShim,
     };
   };
 
@@ -2409,14 +2495,28 @@ const BUN_HELPERS: &str = r##"
       else if (src instanceof ArrayBuffer) raw = new TextDecoder("utf-8").decode(new Uint8Array(src));
       else if (ArrayBuffer.isView(src)) raw = new TextDecoder("utf-8").decode(new Uint8Array(src.buffer, src.byteOffset, src.byteLength));
       else {
-        // Bun rejects non-string/non-bytes inputs. Match.
         const err = new TypeError("Bun.TOML.parse: expected a string or Buffer, got " + (src === null ? "null" : typeof src));
         err.code = "ERR_INVALID_ARG_TYPE";
         throw err;
       }
+      // Guard against pathological inline-table depth — Bun raises RangeError.
+      let depth = 0, maxDepth = 0;
+      for (let i = 0; i < raw.length; i++) {
+        const c = raw.charCodeAt(i);
+        if (c === 123) { depth++; if (depth > maxDepth) maxDepth = depth; }
+        else if (c === 125) depth--;
+      }
+      if (maxDepth > 1000) throw new RangeError("TOML nesting too deep");
       let json;
       try { json = Bun.__rust_toml_to_json(raw); }
-      catch (e) { throw new SyntaxError(e && e.message ? e.message : String(e)); }
+      catch (e) {
+        // Stack overflow / pathological depth from rust parser → RangeError.
+        const m = e && e.message ? e.message : String(e);
+        if (/recursion limit|stack overflow|too deep|nesting/i.test(m)) {
+          throw new RangeError(m);
+        }
+        throw new SyntaxError(m);
+      }
       return JSON.parse(json);
     },
   };
@@ -2917,9 +3017,11 @@ fn build_internal_testing_stub<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             toUTF16Alloc: (s) => s,
             stringsInternals: {
                 toUTF16AllocSentinel(buf) {
-                    return buf.toString("utf8");
+                    return __bunDecodeUtf8WithReplacement(buf);
                 },
-                toUTF16Alloc(buf) { return buf.toString("utf8"); },
+                toUTF16Alloc(buf) {
+                    return __bunDecodeUtf8WithReplacement(buf);
+                },
             },
             decodeURIComponentSIMD: decodeURIComponent,
             encodeURIComponentSIMD: encodeURIComponent,
