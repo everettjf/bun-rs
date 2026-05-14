@@ -2614,21 +2614,40 @@ const BUN_HELPERS: &str = r##"
       // sees resolve called with a thenable and calls obj.then again ->
       // infinite recursion. Build a plain snapshot view.
       then(onFulfilled, onRejected) {
+        const stdoutBytes = this.stdout;
+        const stderrBytes = this.stderr;
+        const exit = this.exitCode;
         const plain = {
-          exitCode: this.exitCode,
-          stdout: this.stdout,
-          stderr: this.stderr,
+          exitCode: exit,
+          stdout: stdoutBytes,
+          stderr: stderrBytes,
           stdoutText: this.stdoutText,
           stderrText: this.stderrText,
-          text: this.text.bind(this),
-          json: this.json.bind(this),
-          blob: this.blob.bind(this),
-          bytes: this.bytes.bind(this),
-          arrayBuffer: this.arrayBuffer.bind(this),
+          text() { return new TextDecoder().decode(stdoutBytes); },
+          json() { return JSON.parse(new TextDecoder().decode(stdoutBytes)); },
+          blob() { return new Blob([stdoutBytes]); },
+          bytes() { return stdoutBytes; },
+          arrayBuffer() { return stdoutBytes.buffer.slice(stdoutBytes.byteOffset, stdoutBytes.byteOffset + stdoutBytes.byteLength); },
           lines: this.lines.bind(this),
           quiet: this.quiet.bind(this),
           nothrow: this.nothrow.bind(this),
         };
+        // $.throws(true): non-zero exit code throws a ShellError.
+        if (Bun.$._throws && exit !== 0) {
+          const err = new (Bun.$.ShellError)("Failed with exit code " + exit, exit);
+          err.exitCode = exit;
+          err.stdout = stdoutBytes;
+          err.stderr = stderrBytes;
+          err.text = plain.text;
+          err.json = plain.json;
+          err.blob = plain.blob;
+          err.bytes = plain.bytes;
+          err.arrayBuffer = plain.arrayBuffer;
+          if (onRejected) {
+            try { return Promise.resolve(onRejected(err)); } catch (e2) { return Promise.reject(e2); }
+          }
+          return Promise.reject(err);
+        }
         try {
           const v = onFulfilled ? onFulfilled(plain) : plain;
           return Promise.resolve(v);
@@ -2711,7 +2730,8 @@ const BUN_HELPERS: &str = r##"
   Bun.$.env = (e) => Bun.$.__withOptions({ cwd: null, env: e });
   Bun.$.nothrow = () => Bun.$;
   Bun.$.quiet = () => Bun.$;
-  Bun.$.throws = (_b) => Bun.$;
+  Bun.$.throws = (b) => { Bun.$._throws = !!b; return Bun.$; };
+  Bun.$._throws = false;
   Bun.$.braces = function (_strings) {
     // Brace expansion: very minimal — return a single-element array of the
     // input as a string. Real shell brace expansion is unsupported.
@@ -2791,11 +2811,15 @@ const BUN_HELPERS: &str = r##"
       },
       blob() { return new Blob([this.stdout]); },
       then(onFulfilled, onRejected) {
+        const stdoutBytes = this.stdout;
         const plain = {
           exitCode: this.exitCode, stdout: this.stdout, stderr: this.stderr,
           stdoutText: this.stdoutText, stderrText: this.stderrText,
-          text: this.text.bind(this), json: this.json.bind(this), blob: this.blob.bind(this),
-          bytes: this.bytes.bind(this), arrayBuffer: this.arrayBuffer.bind(this),
+          text() { return new TextDecoder().decode(stdoutBytes); },
+          json() { return JSON.parse(new TextDecoder().decode(stdoutBytes)); },
+          blob() { return new Blob([stdoutBytes]); },
+          bytes() { return stdoutBytes; },
+          arrayBuffer() { return stdoutBytes.buffer.slice(stdoutBytes.byteOffset, stdoutBytes.byteOffset + stdoutBytes.byteLength); },
           lines: this.lines.bind(this), quiet: this.quiet.bind(this), nothrow: this.nothrow.bind(this),
         };
         try {
