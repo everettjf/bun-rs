@@ -2416,7 +2416,16 @@ const BUN_HELPERS: &str = r##"
     let cmd = "";
     if (Array.isArray(strings)) {
       cmd = strings[0];
-      for (let i = 0; i < values.length; i++) cmd += String(values[i]) + (strings[i + 1] || "");
+      for (let i = 0; i < values.length; i++) {
+        const v = values[i];
+        // `${{ raw: "..." }}` — splice in verbatim without shell-quoting.
+        // `${ Bun.file(...) }` — splice in the file path.
+        let inserted;
+        if (v && typeof v === "object" && typeof v.raw === "string") inserted = v.raw;
+        else if (Array.isArray(v)) inserted = v.map(x => x && typeof x === "object" && typeof x.raw === "string" ? x.raw : String(x)).join(" ");
+        else inserted = String(v);
+        cmd += inserted + (strings[i + 1] || "");
+      }
     } else {
       cmd = String(strings);
     }
@@ -2577,7 +2586,14 @@ const BUN_HELPERS: &str = r##"
       let cmd = "";
       if (Array.isArray(strings)) {
         cmd = strings[0];
-        for (let i = 0; i < values.length; i++) cmd += String(values[i]) + (strings[i + 1] || "");
+        for (let i = 0; i < values.length; i++) {
+          const v = values[i];
+          let inserted;
+          if (v && typeof v === "object" && typeof v.raw === "string") inserted = v.raw;
+          else if (Array.isArray(v)) inserted = v.map(x => x && typeof x === "object" && typeof x.raw === "string" ? x.raw : String(x)).join(" ");
+          else inserted = String(v);
+          cmd += inserted + (strings[i + 1] || "");
+        }
       } else {
         cmd = String(strings);
       }
