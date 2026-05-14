@@ -1086,8 +1086,15 @@ const GLOBALS: &str = r#"
       (re instanceof RegExp ? re.test(a) : a.includes(String(re))));
   };
   g.expect.closeTo = function (n, digits) {
+    if (typeof n !== "number") throw new TypeError("closeTo: expected must be a number");
+    if (digits !== undefined && typeof digits !== "number") throw new TypeError("closeTo: precision must be a number");
     const d = digits == null ? 2 : digits;
-    return asymmetric("CloseTo", (a) => typeof a === "number" && Math.abs(a - n) < Math.pow(10, -d) / 2);
+    return asymmetric("CloseTo", (a) => {
+      if (typeof a !== "number") return false;
+      if (a === n) return true;
+      if (!Number.isFinite(a) && !Number.isFinite(n)) return a === n;
+      return Math.abs(a - n) < Math.pow(10, -d) / 2;
+    });
   };
   g.__bun_assertion_state = g.__bun_assertion_state || { count: 0, expected: null, hasAny: false };
   g.expect.assertions = function (n) {
