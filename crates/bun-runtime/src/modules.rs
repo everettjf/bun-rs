@@ -800,9 +800,13 @@ fn npm_package_stub<'ctx>(ctx: &'ctx Context, spec: &str) -> Option<Value<'ctx>>
         })()"#),
         "fast-glob" => Some(r#"(() => {
             const fg = (patterns, opts) => { try { return Promise.resolve([...new Bun.Glob(Array.isArray(patterns) ? patterns[0] : patterns).scanSync({ cwd: opts && opts.cwd })]); } catch { return Promise.resolve([]); } };
-            fg.sync = (patterns, opts) => { try { return [...new Bun.Glob(Array.isArray(patterns) ? patterns[0] : patterns).scanSync({ cwd: opts && opts.cwd })]; } catch { return []; } };
-            fg.async = fg;
+            fg.sync = fg.globSync = (patterns, opts) => { try { return [...new Bun.Glob(Array.isArray(patterns) ? patterns[0] : patterns).scanSync({ cwd: opts && opts.cwd })]; } catch { return []; } };
+            fg.glob = fg.async = fg;
             fg.stream = fg;
+            fg.isDynamicPattern = (p) => /[*?[\]{}]/.test(String(p));
+            fg.escapePath = (p) => String(p).replace(/[*?[\]{}]/g, "\\$&");
+            fg.convertPathToPattern = (p) => String(p);
+            fg.generateTasks = (patterns, opts) => [{ base: ".", dynamic: true, positive: Array.isArray(patterns) ? patterns : [patterns], negative: [] }];
             return Object.assign(fg, { __esModule: true, default: fg });
         })()"#),
         "mkfifo" => Some(r#"({
