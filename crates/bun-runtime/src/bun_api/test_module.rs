@@ -133,6 +133,84 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
             mock.restore = () => {};
             mock.clearAllMocks = () => {};
             mock.resetAllMocks = () => {};
+            // Hoist the fake-timer factory so vi can reuse the same impl.
+            const __jestObj = (function () {
+                const ft = globalThis.__bun_fake_timers = globalThis.__bun_fake_timers || {
+                    active: false, mockedNow: 0,
+                    origNow: Date.now.bind(Date),
+                    origSetTimeout: globalThis.setTimeout,
+                    origClearTimeout: globalThis.clearTimeout,
+                    origSetInterval: globalThis.setInterval,
+                    origClearInterval: globalThis.clearInterval,
+                    nextId: 1, timers: [],
+                };
+                function fakeSetTimeout(cb, ms) {
+                    const delay = Math.max(0, Math.ceil(ms || 0));
+                    const id = ft.nextId++;
+                    ft.timers.push({ id, fireAt: ft.mockedNow + delay, cb, interval: 0 });
+                    return id;
+                }
+                function fakeSetInterval(cb, ms) {
+                    const delay = Math.max(1, Math.ceil(ms || 0));
+                    const id = ft.nextId++;
+                    ft.timers.push({ id, fireAt: ft.mockedNow + delay, cb, interval: delay });
+                    return id;
+                }
+                function fakeClear(id) { ft.timers = ft.timers.filter(t => t.id !== id); }
+                function fakeAdvance(ms) {
+                    if (!ft.active) return;
+                    const target = ft.mockedNow + ms;
+                    while (true) {
+                        const next = ft.timers.filter(t => t.fireAt <= target).sort((a, b) => a.fireAt - b.fireAt)[0];
+                        if (!next) break;
+                        ft.mockedNow = next.fireAt;
+                        if (next.interval > 0) next.fireAt += next.interval;
+                        else ft.timers = ft.timers.filter(t => t.id !== next.id);
+                        try { next.cb(); } catch {}
+                    }
+                    ft.mockedNow = target;
+                }
+                function install(opts) {
+                    ft.active = true;
+                    const nowOpt = opts && opts.now;
+                    if (typeof nowOpt === "number") ft.mockedNow = nowOpt;
+                    else if (nowOpt instanceof Date) ft.mockedNow = nowOpt.getTime();
+                    else ft.mockedNow = ft.origNow();
+                    Date.now = () => ft.mockedNow;
+                    globalThis.setTimeout = fakeSetTimeout;
+                    globalThis.clearTimeout = fakeClear;
+                    globalThis.setInterval = fakeSetInterval;
+                    globalThis.clearInterval = fakeClear;
+                }
+                function uninstall() {
+                    ft.active = false;
+                    ft.timers = [];
+                    Date.now = ft.origNow;
+                    globalThis.setTimeout = ft.origSetTimeout;
+                    globalThis.clearTimeout = ft.origClearTimeout;
+                    globalThis.setInterval = ft.origSetInterval;
+                    globalThis.clearInterval = ft.origClearInterval;
+                }
+                return {
+                    useFakeTimers: install, useRealTimers: uninstall,
+                    setSystemTime: (t) => {
+                        if (ft.active) {
+                            if (typeof t === "number") ft.mockedNow = t;
+                            else if (t instanceof Date) ft.mockedNow = t.getTime();
+                        }
+                    },
+                    advanceTimersByTime: fakeAdvance,
+                    runOnlyPendingTimers: () => { if (ft.active) fakeAdvance(0); },
+                    runAllTimers: () => {
+                        if (!ft.active) return;
+                        let safety = 10000;
+                        while (ft.timers.length > 0 && safety-- > 0) {
+                            const next = ft.timers.sort((a,b)=>a.fireAt-b.fireAt)[0];
+                            fakeAdvance(Math.max(0, next.fireAt - ft.mockedNow));
+                        }
+                    },
+                };
+            })();
             return {
                 __esModule: true,
                 describe: globalThis.describe,
@@ -144,76 +222,18 @@ pub fn build<'ctx>(ctx: &'ctx Context) -> Value<'ctx> {
                 beforeEach: globalThis.beforeEach,
                 afterEach: globalThis.afterEach,
                 mock,
-                jest: (function () {
-                    const fakeTimers = globalThis.__bun_fake_timers = globalThis.__bun_fake_timers || {
-                        active: false,
-                        mockedNow: 0,
-                        originalNow: Date.now.bind(Date),
-                        timers: [],
-                    };
-                    return {
-                        fn: mock, mock: mock.module, spyOn: function () { return mkMock(); },
-                        useFakeTimers: (opts) => {
-                            fakeTimers.active = true;
-                            const nowOpt = opts && opts.now;
-                            if (typeof nowOpt === "number") fakeTimers.mockedNow = nowOpt;
-                            else if (nowOpt instanceof Date) fakeTimers.mockedNow = nowOpt.getTime();
-                            else fakeTimers.mockedNow = fakeTimers.originalNow();
-                            Date.now = () => fakeTimers.mockedNow;
-                        },
-                        useRealTimers: () => {
-                            fakeTimers.active = false;
-                            Date.now = fakeTimers.originalNow;
-                        },
-                        clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {},
-                        setTimeout: (ms) => { globalThis.__bun_test_default_timeout = ms; },
-                        setSystemTime: (t) => {
-                            if (fakeTimers.active) {
-                                if (typeof t === "number") fakeTimers.mockedNow = t;
-                                else if (t instanceof Date) fakeTimers.mockedNow = t.getTime();
-                            }
-                        },
-                        advanceTimersByTime: (ms) => {
-                            if (fakeTimers.active) fakeTimers.mockedNow += ms;
-                        },
-                        runOnlyPendingTimers: () => {}, runAllTimers: () => {},
-                        requireActual: (m) => globalThis.require(m),
-                        requireMock: (m) => globalThis.require(m),
-                        retryTimes: (_n) => {},
-                    };
-                })(),
-                vi: (function () {
-                    const fakeTimers = globalThis.__bun_fake_timers = globalThis.__bun_fake_timers || {
-                        active: false, mockedNow: 0,
-                        originalNow: Date.now.bind(Date), timers: [],
-                    };
-                    return {
-                        fn: mock, mock: mock.module, spyOn: function () { return mkMock(); },
-                        useFakeTimers: (opts) => {
-                            fakeTimers.active = true;
-                            const nowOpt = opts && opts.now;
-                            if (typeof nowOpt === "number") fakeTimers.mockedNow = nowOpt;
-                            else if (nowOpt instanceof Date) fakeTimers.mockedNow = nowOpt.getTime();
-                            else fakeTimers.mockedNow = fakeTimers.originalNow();
-                            Date.now = () => fakeTimers.mockedNow;
-                        },
-                        useRealTimers: () => {
-                            fakeTimers.active = false;
-                            Date.now = fakeTimers.originalNow;
-                        },
-                        advanceTimersByTime: (ms) => {
-                            if (fakeTimers.active) fakeTimers.mockedNow += ms;
-                        },
-                        setSystemTime: (t) => {
-                            if (fakeTimers.active) {
-                                if (typeof t === "number") fakeTimers.mockedNow = t;
-                                else if (t instanceof Date) fakeTimers.mockedNow = t.getTime();
-                            }
-                        },
-                        runAllTimers: () => {},
-                        clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {},
-                    };
-                })(),
+                jest: Object.assign({
+                    fn: mock, mock: mock.module, spyOn: function () { return mkMock(); },
+                    clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {},
+                    setTimeout: (ms) => { globalThis.__bun_test_default_timeout = ms; },
+                    requireActual: (m) => globalThis.require(m),
+                    requireMock: (m) => globalThis.require(m),
+                    retryTimes: (_n) => {},
+                }, __jestObj),
+                vi: Object.assign({
+                    fn: mock, mock: mock.module, spyOn: function () { return mkMock(); },
+                    clearAllMocks: () => {}, resetAllMocks: () => {}, restoreAllMocks: () => {},
+                }, __jestObj),
                 spyOn: function (obj, key) {
                     const orig = obj[key];
                     const m = mkMock(typeof orig === "function" ? orig.bind(obj) : undefined);
