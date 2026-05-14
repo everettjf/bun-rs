@@ -179,7 +179,8 @@ fn run() -> Result<(), RuntimeError> {
 
     match args[0].as_str() {
         "--version" | "-v" => {
-            println!("bun-rs {}", env!("CARGO_PKG_VERSION"));
+            // Match Bun's output format (bare version number).
+            println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         "--help" | "-h" => {

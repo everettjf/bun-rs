@@ -1639,7 +1639,7 @@ const BUN_HELPERS: &str = r##"
       stderr: wrapStdio(r.stderr) || new Uint8Array(0),
       exitCode: r.signal ? null : (r.status === null ? -1 : r.status),
       success: r.status === 0 && !r.signal,
-      signalCode: r.signal,
+      signalCode: r.signal || undefined,
       pid: 0,
       resourceUsage: () => ({}),
     };
