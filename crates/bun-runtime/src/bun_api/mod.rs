@@ -2162,8 +2162,8 @@ const BUN_HELPERS: &str = r##"
           j++;
         }
         i = j;
-      } else if (next === "(" || next === ")" || next === "#" || next === "%" || next === "*" || next === "+" || next === "-" || next === "." || next === "/") {
-        // Charset designation: ESC <set> <charset>
+      } else if (str.charCodeAt(i + 1) >= 0x20 && str.charCodeAt(i + 1) <= 0x2f) {
+        // ESC + I (0x20..0x2f intermediate) + F (final byte): 3-byte sequence.
         i += 3;
       } else if (next === "P" || next === "X" || next === "^" || next === "_") {
         // DCS/SOS/PM/APC: consume to ST (ESC \) or BEL.
