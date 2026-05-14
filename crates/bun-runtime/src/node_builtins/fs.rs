@@ -716,6 +716,110 @@ fn install_sync(ctx: &Context, obj: &bun_jsc::Object<'_>) {
         }
         Ok(Value::new_undefined(args.context()))
     });
+    bind(ctx, obj, "rmdirSync", |args| {
+        let p = args.get(0).to_string();
+        let opts = args.get(1);
+        let recursive = if opts.is_object() {
+            opts.to_object()
+                .ok()
+                .and_then(|o| o.get_property("recursive").ok())
+                .map_or(false, |v| v.to_bool())
+        } else {
+            false
+        };
+        if recursive {
+            fs::remove_dir_all(&p).map_err(io_err)?;
+        } else {
+            fs::remove_dir(&p).map_err(io_err)?;
+        }
+        Ok(Value::new_undefined(args.context()))
+    });
+    // Async (callback or promise) wrappers for rm/rmdir.
+    bind(ctx, obj, "rm", |args| {
+        let p = args.get(0).to_string();
+        let opts = args.get(1);
+        let recursive = if opts.is_object() {
+            opts.to_object()
+                .ok()
+                .and_then(|o| o.get_property("recursive").ok())
+                .map_or(false, |v| v.to_bool())
+        } else {
+            false
+        };
+        let path = std::path::PathBuf::from(&p);
+        // If last arg is a callback, use callback form.
+        let cb_idx = if args.len() >= 3 && args.get(2).is_object() && args.get(2).to_object().map(|o| o.is_function()).unwrap_or(false) {
+            Some(2)
+        } else if args.len() >= 2 && args.get(1).is_object() && args.get(1).to_object().map(|o| o.is_function()).unwrap_or(false) {
+            Some(1)
+        } else {
+            None
+        };
+        let result = if path.is_dir() {
+            if recursive { fs::remove_dir_all(&path) } else { fs::remove_dir(&path) }
+        } else {
+            fs::remove_file(&path)
+        };
+        let ctx = args.context();
+        if let Some(i) = cb_idx {
+            let cb = args.get(i);
+            if let Ok(cb_obj) = cb.to_object() {
+                match result {
+                    Ok(()) => { let _ = cb_obj.call(None, &[Value::new_null(ctx)]); }
+                    Err(e) => {
+                        let err = ctx.eval(&format!("new Error({:?})", e.to_string()), Some("[fs.rm]"))
+                            .unwrap_or_else(|_| Value::new_null(ctx));
+                        let _ = cb_obj.call(None, &[err]);
+                    }
+                }
+            }
+            return Ok(Value::new_undefined(ctx));
+        }
+        match result {
+            Ok(()) => ctx.eval("Promise.resolve()", Some("[fs.rm.promise]")).map_err(|e| e.to_string()),
+            Err(e) => ctx.eval(&format!("Promise.reject(new Error({:?}))", e.to_string()), Some("[fs.rm.promise]")).map_err(|e| e.to_string()),
+        }
+    });
+    bind(ctx, obj, "rmdir", |args| {
+        let p = args.get(0).to_string();
+        let opts = args.get(1);
+        let recursive = if opts.is_object() {
+            opts.to_object()
+                .ok()
+                .and_then(|o| o.get_property("recursive").ok())
+                .map_or(false, |v| v.to_bool())
+        } else {
+            false
+        };
+        let result = if recursive {
+            fs::remove_dir_all(&p)
+        } else {
+            fs::remove_dir(&p)
+        };
+        let ctx = args.context();
+        // Optional callback (Node style).
+        let cb_idx = if args.len() >= 3 && args.get(2).to_object().map(|o| o.is_function()).unwrap_or(false) {
+            Some(2)
+        } else if args.len() >= 2 && args.get(1).to_object().map(|o| o.is_function()).unwrap_or(false) {
+            Some(1)
+        } else { None };
+        if let Some(i) = cb_idx {
+            if let Ok(cb_obj) = args.get(i).to_object() {
+                match result {
+                    Ok(()) => { let _ = cb_obj.call(None, &[Value::new_null(ctx)]); }
+                    Err(e) => {
+                        let err = ctx.eval(&format!("new Error({:?})", e.to_string()), Some("[fs.rmdir]")).unwrap_or_else(|_| Value::new_null(ctx));
+                        let _ = cb_obj.call(None, &[err]);
+                    }
+                }
+            }
+            return Ok(Value::new_undefined(ctx));
+        }
+        match result {
+            Ok(()) => ctx.eval("Promise.resolve()", Some("[fs.rmdir.promise]")).map_err(|e| e.to_string()),
+            Err(e) => ctx.eval(&format!("Promise.reject(new Error({:?}))", e.to_string()), Some("[fs.rmdir.promise]")).map_err(|e| e.to_string()),
+        }
+    });
 
     bind(ctx, obj, "unlinkSync", |args| {
         let p = args.get(0).to_string();
