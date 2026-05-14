@@ -1039,7 +1039,13 @@ const BUN_HELPERS: &str = r##"
     return null;
   };
   Object.defineProperty(Bun, "argv", { get() { return process.argv; } });
-  Object.defineProperty(Bun, "main", { get() { return process.argv[1] || ""; } });
+  // Bun.main is writable; default is the running script.
+  let _bunMainOverride;
+  Object.defineProperty(Bun, "main", {
+    get() { return _bunMainOverride !== undefined ? _bunMainOverride : (process.argv[1] || ""); },
+    set(v) { _bunMainOverride = v; },
+    configurable: true,
+  });
   Object.defineProperty(Bun, "origin", { get() { return ""; } });
   Bun.cwd = () => process.cwd();
   Bun.nanoseconds = () => {
