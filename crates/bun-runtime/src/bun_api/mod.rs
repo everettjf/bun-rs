@@ -1308,10 +1308,11 @@ const BUN_HELPERS: &str = r##"
   };
   Object.defineProperty(Bun, "argv", { get() { return process.argv; } });
   // Bun.main is writable; default is the running script.
+  globalThis.__bun_main_override = undefined;
   let _bunMainOverride;
   Object.defineProperty(Bun, "main", {
-    get() { return _bunMainOverride !== undefined ? _bunMainOverride : (process.argv[1] || ""); },
-    set(v) { _bunMainOverride = v; },
+    get() { return globalThis.__bun_main_override !== undefined ? globalThis.__bun_main_override : (process.argv[1] || ""); },
+    set(v) { globalThis.__bun_main_override = v; },
     configurable: true,
   });
   Object.defineProperty(Bun, "origin", { get() { return ""; } });

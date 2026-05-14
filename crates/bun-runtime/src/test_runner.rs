@@ -90,8 +90,13 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
 
     for file in &files {
         eprintln!("\n● {}", file.display());
-        // Reset the JS-side collector for each file.
-        let _ = rt.ctx.eval("globalThis.__bun_test_collector = []; globalThis.__bun_has_only = false;", Some("[test-reset]"));
+        // Reset the JS-side collector for each file. Also reset Bun.main and
+        // set process.argv[1] so the file's Bun.main reflects this test file.
+        let reset_script = format!(
+            "globalThis.__bun_test_collector = []; globalThis.__bun_has_only = false; globalThis.__bun_main_override = undefined; process.argv[1] = {};",
+            serde_json::to_string(&file.to_string_lossy().to_string()).unwrap_or_else(|_| "\"\"".to_string())
+        );
+        let _ = rt.ctx.eval(&reset_script, Some("[test-reset]"));
 
         // Load the module via the loader (full TS / ESM pipeline).
         if let Err(e) = crate::modules::run_entry(&rt.ctx, file) {
