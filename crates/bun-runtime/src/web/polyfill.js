@@ -743,6 +743,80 @@
       },
     };
   }
+  // ── ReadableStream variants Bun exposes as globals ─────────────────
+  if (typeof g.ReadableStreamBYOBReader === "undefined") {
+    g.ReadableStreamBYOBReader = class ReadableStreamBYOBReader {
+      constructor(stream) { this._s = stream; this._reader = stream.getReader(); }
+      async read(view) { const r = await this._reader.read(); return { value: r.value, done: r.done }; }
+      releaseLock() { try { this._reader.releaseLock(); } catch {} }
+      cancel(reason) { return this._reader.cancel(reason); }
+      get closed() { return this._reader.closed; }
+    };
+  }
+  if (typeof g.ReadableStreamDefaultReader === "undefined") {
+    g.ReadableStreamDefaultReader = class ReadableStreamDefaultReader {
+      constructor(stream) { this._reader = stream.getReader(); }
+      read() { return this._reader.read(); }
+      releaseLock() { try { this._reader.releaseLock(); } catch {} }
+      cancel(reason) { return this._reader.cancel(reason); }
+      get closed() { return this._reader.closed; }
+    };
+  }
+  if (typeof g.ReadableStreamBYOBRequest === "undefined") {
+    g.ReadableStreamBYOBRequest = class ReadableStreamBYOBRequest {};
+  }
+  if (typeof g.ReadableStreamDefaultController === "undefined") {
+    g.ReadableStreamDefaultController = class ReadableStreamDefaultController {};
+  }
+  if (typeof g.ReadableByteStreamController === "undefined") {
+    g.ReadableByteStreamController = class ReadableByteStreamController {};
+  }
+  if (typeof g.WritableStreamDefaultController === "undefined") {
+    g.WritableStreamDefaultController = class WritableStreamDefaultController {};
+  }
+  if (typeof g.WritableStreamDefaultWriter === "undefined") {
+    g.WritableStreamDefaultWriter = class WritableStreamDefaultWriter {};
+  }
+  if (typeof g.TransformStreamDefaultController === "undefined") {
+    g.TransformStreamDefaultController = class TransformStreamDefaultController {};
+  }
+  // SharedArrayBuffer: Bun exposes the type even though we can't share
+  // across threads. Fall back to ArrayBuffer.
+  if (typeof g.SharedArrayBuffer === "undefined") {
+    g.SharedArrayBuffer = ArrayBuffer;
+  }
+  if (typeof g.Atomics === "undefined") {
+    g.Atomics = {
+      add: (a, i, v) => { const o = a[i]; a[i] = o + v; return o; },
+      sub: (a, i, v) => { const o = a[i]; a[i] = o - v; return o; },
+      and: (a, i, v) => { const o = a[i]; a[i] = o & v; return o; },
+      or: (a, i, v) => { const o = a[i]; a[i] = o | v; return o; },
+      xor: (a, i, v) => { const o = a[i]; a[i] = o ^ v; return o; },
+      load: (a, i) => a[i],
+      store: (a, i, v) => { a[i] = v; return v; },
+      exchange: (a, i, v) => { const o = a[i]; a[i] = v; return o; },
+      compareExchange: (a, i, e, v) => { const o = a[i]; if (o === e) a[i] = v; return o; },
+      wait: (_a, _i, _v, _t) => "ok",
+      notify: (_a, _i, _c) => 0,
+      isLockFree: (_n) => true,
+    };
+  }
+  // ── CryptoKey / SubtleCrypto / Crypto globals (Web Crypto types) ───
+  if (typeof g.CryptoKey === "undefined") {
+    g.CryptoKey = class CryptoKey {
+      constructor() { this.type = "secret"; this.extractable = true; this.algorithm = {}; this.usages = []; }
+    };
+  }
+  if (typeof g.Crypto === "undefined") {
+    g.Crypto = class Crypto {
+      constructor() { Object.assign(this, g.crypto); }
+    };
+  }
+  if (typeof g.SubtleCrypto === "undefined") {
+    g.SubtleCrypto = class SubtleCrypto {
+      constructor() { Object.assign(this, g.crypto.subtle); }
+    };
+  }
 
   // ── HTMLRewriter (stub) — Bun-specific streaming HTML transformer ──
   if (typeof g.HTMLRewriter === "undefined") {
