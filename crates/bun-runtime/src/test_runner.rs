@@ -932,15 +932,19 @@ const GLOBALS: &str = r#"
           };
           const r = fn.call(ctx, received, ...args);
           function settle(r) {
-            if (r === null || typeof r !== "object" || typeof r.pass !== "boolean") {
+            if (r === null || typeof r !== "object" || !("pass" in r)) {
               throw new Error("Unexpected return from matcher function `" + name + "`.\nMatcher functions should return an object in the following format:\n  {message?: string | function, pass: boolean}\n'" + (r === undefined ? "undefined" : JSON.stringify(r)) + "' was returned");
             }
             const pass = !!r.pass;
             if (not ? pass : !pass) {
               let msg;
               if (typeof r.message === "function") msg = r.message();
-              else if (r.message !== undefined && r.message !== null) msg = String(r.message);
+              else if (r.message !== undefined && r.message !== null) msg = r.message;
               else msg = "No message was specified for this matcher.";
+              // Force coercion to string here so toPrimitive callbacks
+              // that throw propagate the thrown error to the caller (the
+              // .toThrow site), not later inside Error() formatting.
+              msg = String(msg);
               throw new Error(msg);
             }
           }
