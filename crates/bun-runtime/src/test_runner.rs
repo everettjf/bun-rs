@@ -219,6 +219,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                             // Mark whether we're in a concurrent test so
                             // onTestFinished() can throw appropriately.
                             globalThis.__bun_in_concurrent_test = !!t.concurrent;
+                            globalThis.__bun_test_running = true;
                             let result;
                             try {
                                 const tmo = t.timeout || 5000;
@@ -233,6 +234,7 @@ pub fn run_tests(paths: Vec<String>) -> i32 {
                                 });
                                 result = await Promise.race([runFn, timeoutP]);
                                 void result;
+                                globalThis.__bun_test_running = false;
                                 // Validate expect.assertions(N) / hasAssertions().
                                 const st = globalThis.__bun_assertion_state;
                                 if (st.expected === "any" && !st.hasAny) {
@@ -997,6 +999,9 @@ const GLOBALS: &str = r#"
       // .toMatchInlineSnapshot always pass (mirroring Bun's "write the
       // snapshot on first run" semantics, just without persistence).
       toMatchSnapshot(...args) {
+        if (!g.__bun_test_running) {
+          throw new Error("Snapshot matchers cannot be used outside of a test");
+        }
         // Bun's signatures: toMatchSnapshot(name?), toMatchSnapshot(matcher, name?)
         // matcher must be a plain object whose properties are values or
         // asymmetric matchers; throws if received is not an object.
@@ -1032,6 +1037,9 @@ const GLOBALS: &str = r#"
         /* otherwise always pass */
       },
       toMatchInlineSnapshot(...args) {
+        if (!g.__bun_test_running) {
+          throw new Error("Snapshot matchers cannot be used outside of a test");
+        }
         // toMatchInlineSnapshot(snap?) or (matcher, snap?). Same validation
         // as toMatchSnapshot but second arg may be a string.
         const a = args[0];
