@@ -334,14 +334,35 @@ fn read_pem_or_path(v: &Value<'_>) -> Result<Vec<u8>, String> {
     if let Some(b) = v.typed_array_bytes() {
         return Ok(b.to_vec());
     }
-    let s = v.to_string();
-    // If the value looks like a PEM blob, use it directly. Otherwise treat
-    // as a filesystem path.
+    let mut s = v.to_string();
+    // If the value looks like a PEM blob, use it directly.
     if s.contains("-----BEGIN ") {
-        Ok(s.into_bytes())
-    } else {
-        std::fs::read(&s).map_err(|e| format!("read {s}: {e}"))
+        return Ok(s.into_bytes());
     }
+    // file:// URL → strip scheme and decode percent-escapes.
+    if s.starts_with("file://") {
+        let raw = &s[7..];
+        s = match urlencoding_decode(raw) {
+            Ok(d) => d,
+            Err(_) => raw.to_string(),
+        };
+    }
+    std::fs::read(&s).map_err(|e| format!("read {s}: {e}"))
+}
+
+fn urlencoding_decode(s: &str) -> Result<String, std::str::Utf8Error> {
+    let mut out = Vec::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let h = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok());
+            if let Some(b) = h { out.push(b); i += 3; continue; }
+        }
+        out.push(bytes[i]); i += 1;
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
 }
 
 async fn handle_request(
