@@ -4,9 +4,10 @@ Cargo.lock.bak
 .DS_Store
 *.profraw
 .claude
-[object
-hello
-invalid.css
-mydb.sqlite
-*.sqlite
-*Object*
+
+# Test pollution guard: scripts/run-bun-suite.sh runs upstream Bun tests that
+# write tempfiles into process.cwd(). Block common artifact extensions at the
+# repo root so a stray run can't dirty the tree. Real sources live in subdirs.
+/*.txt
+/*.sqlite
+/*.css
