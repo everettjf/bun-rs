@@ -1,1 +1,0 @@
-cat /Users/eevv/focus/bun/test/js/bun/shell/commands/cp.test.ts
